@@ -1,0 +1,2 @@
+{"timestamp": "2026-05-28T10:56:36.018039", "ip": "33.74.34.116", "action": "clean_temp", "target": "", "command": "find /tmp -type f -mtime +7 -delete", "result": "执行成功（无输出）", "success": true}
+{"timestamp": "2026-05-28T10:56:50.768846", "ip": "33.74.34.116", "action": "clear_cache", "target": "", "command": "sync && echo 3 > /proc/sys/vm/drop_caches", "result": "执行成功（无输出）", "success": true}

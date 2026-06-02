@@ -1,0 +1,1 @@
+{"timestamp": "2026-05-25T08:10:44.942693", "ip": "10.145.60.111", "action": "vacuum_journal", "target": "", "command": "journalctl --vacuum-size=200M", "result": "执行成功（无输出）", "success": true}

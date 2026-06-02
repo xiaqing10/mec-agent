@@ -1,0 +1,2 @@
+{"timestamp": "2026-06-01T15:33:40.192137", "ip": "33.74.34.116", "action": "clean_temp", "target": "", "command": "find /tmp -type f -mtime +7 -delete", "result": "执行成功（无输出）", "success": true}
+{"timestamp": "2026-06-01T15:33:43.862855", "ip": "33.74.34.116", "action": "vacuum_journal", "target": "", "command": "journalctl --vacuum-size=200M", "result": "执行成功（无输出）", "success": true}

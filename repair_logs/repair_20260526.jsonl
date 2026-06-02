@@ -1,0 +1,5 @@
+{"timestamp": "2026-05-26T16:11:44.338337", "ip": "10.145.16.66", "action": "restart_container", "target": "dev", "command": "docker restart dev", "result": "dev", "success": true}
+{"timestamp": "2026-05-26T16:26:37.257531", "ip": "10.145.60.81", "action": "vacuum_journal", "target": "", "command": "journalctl --vacuum-size=200M", "result": "执行成功（无输出）", "success": true}
+{"timestamp": "2026-05-26T16:59:26.311916", "ip": "10.145.181.1", "action": "restart_process", "target": "infer", "command": "supervisorctl restart infer", "result": "infer: stopped\ninfer: started", "success": true}
+{"timestamp": "2026-05-26T16:59:32.847439", "ip": "10.145.181.1", "action": "vacuum_journal", "target": "", "command": "journalctl --vacuum-size=200M", "result": "执行成功（无输出）", "success": true}
+{"timestamp": "2026-05-26T16:59:54.093250", "ip": "10.145.181.1", "action": "restart_process", "target": "infer", "command": "supervisorctl restart infer", "result": "infer: stopped\ninfer: started", "success": true}

@@ -1,0 +1,56 @@
+{
+  "# 说明": "诊断模式配置文件 - 代码和LLM都可读取，新增模式需人工审批",
+  "# 优先级": "按patterns数组顺序，先匹配到的优先级最高",
+  "# category": "driver > ros_master > oom > process，决定最终结论",
+  "patterns": [
+    {
+      "id": "cambricon_driver",
+      "keywords": ["cnrtError", "get current device failed", "Card : NONE", "cnrtc", "cambricon.*error", "MLU.*fail", "MLU.*error"],
+      "category": "driver",
+      "conclusion": "驱动没有加载（寒武纪GPU/MLU驱动异常）",
+      "applicable_procs": ["infer"],
+      "grep_in_logs": true,
+      "added_by": "code",
+      "added_date": "2026-05-12"
+    },
+    {
+      "id": "ros_master",
+      "keywords": ["Waiting for ROS master", "cannot connect to ros master", "ROS master not responding", "roscore is not running"],
+      "category": "ros_master",
+      "conclusion": "ROS环境异常（{procs}无法连接ROS master）",
+      "applicable_procs": ["infer", "rtsp", "traffic", "kafka_event", "kafka_flow", "kafka_monitor"],
+      "grep_in_logs": true,
+      "added_by": "code",
+      "added_date": "2026-05-12"
+    },
+    {
+      "id": "rtsp_nodelet_fail",
+      "keywords": ["Failed to load nodelet", "Failed to initialize nodelet", "nodelet load failed"],
+      "category": "rtsp_nodelet",
+      "conclusion": "rtsp模块加载失败（无视频数据源）",
+      "applicable_procs": ["rtsp"],
+      "grep_in_logs": true,
+      "added_by": "code",
+      "added_date": "2026-05-12"
+    },
+    {
+      "id": "oom_kill",
+      "keywords": ["oom-kill", "Out of memory", "Killed process"],
+      "check_cmd": "dmesg | grep -iE 'oom|out of memory|killed process'",
+      "category": "oom",
+      "conclusion": "进程因内存不足被系统杀死（OOM）",
+      "applicable_procs": ["all"],
+      "grep_in_logs": false,
+      "added_by": "llm_pattern_approval",
+      "approved_by": "夏青",
+      "added_date": "2026-05-12",
+      "note": "OOM信息在dmesg中而非进程日志，需额外check_cmd"
+    }
+  ],
+  "proposal_rules": {
+    "threshold": 3,
+    "description": "同一诊断模式出现 >= threshold 次后，推送人工审批通知",
+    "approval_required": true,
+    "auto_apply_on_approval": true
+  }
+}

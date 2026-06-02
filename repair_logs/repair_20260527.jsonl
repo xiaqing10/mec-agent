@@ -1,0 +1,6 @@
+{"timestamp": "2026-05-27T10:48:50.871531", "ip": "52.81.209.3", "action": "restart_container", "target": "dev", "command": "docker restart dev", "result": "dev", "success": true}
+{"timestamp": "2026-05-27T13:50:21.403232", "ip": "172.172.8.99", "action": "restart_service", "target": "ssh", "command": "systemctl restart ssh", "result": "执行成功（无输出）", "success": true}
+{"timestamp": "2026-05-27T15:55:17.870480", "ip": "33.74.34.116", "action": "clean_temp", "target": "", "command": "find /tmp -type f -mtime +7 -delete", "result": "执行成功（无输出）", "success": true}
+{"timestamp": "2026-05-27T16:04:09.545251", "ip": "33.74.34.116", "action": "clean_temp", "target": "", "command": "find /tmp -type f -mtime +7 -delete", "result": "执行成功（无输出）", "success": true}
+{"timestamp": "2026-05-27T16:24:17.580540", "ip": "33.74.33.203", "action": "clean_temp", "target": "", "command": "find /tmp -type f -mtime +7 -delete", "result": "执行成功（无输出）", "success": true}
+{"timestamp": "2026-05-27T16:37:04.293378", "ip": "33.74.33.203", "action": "clean_temp", "target": "", "command": "find /tmp -type f -mtime +7 -delete", "result": "执行成功（无输出）", "success": true}

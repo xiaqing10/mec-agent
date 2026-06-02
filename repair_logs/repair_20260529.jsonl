@@ -1,0 +1,5 @@
+{"timestamp": "2026-05-29T11:24:32.203146", "ip": "10.145.60.81", "action": "restart_container", "target": "dev", "command": "docker restart dev", "result": "dev", "success": true}
+{"timestamp": "2026-05-29T11:25:14.767706", "ip": "10.145.58.111", "action": "restart_process", "target": "infer", "command": "supervisorctl restart infer", "result": "infer: stopped\ninfer: started", "success": true}
+{"timestamp": "2026-05-29T11:35:13.262227", "ip": "10.145.58.111", "action": "restart_process", "target": "infer", "command": "supervisorctl restart infer", "result": "infer: stopped\ninfer: started", "success": true}
+{"timestamp": "2026-05-29T13:52:20.199085", "ip": "10.145.60.81", "action": "restart_service", "target": "cambricon", "command": "systemctl restart cambricon", "result": "Failed to restart cambricon.service: Unit cambricon.service not found.", "success": false}
+{"timestamp": "2026-05-29T13:56:17.089190", "ip": "10.145.58.111", "action": "restart_process", "target": "rtsp", "command": "supervisorctl restart rtsp", "result": "rtsp: stopped\nrtsp: started", "success": true}
