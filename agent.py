@@ -32,6 +32,36 @@ from langchain_openai import ChatOpenAI
 from config import AVAILABLE_MODELS
 from tools import TOOLS
 
+
+# ──────────────────────────────────────────────
+# Helper: build user-facing error message
+# ──────────────────────────────────────────────
+def _build_error_msg(error_str: str, error_type: str, status_code, api_code) -> str:
+    """Classify the LLM error and return a human-readable message + debug info."""
+    error_lower = error_str.lower()
+    debug = f"[{error_type}] status={status_code} code={api_code}"
+
+    if "401" in error_str or "unauthorized" in error_lower:
+        return f"LLM API 认证失败（401），请检查 API Key 是否有效。{debug}"
+    if status_code == 429 or "quota" in error_lower or "AccountQuotaExceeded" in error_lower:
+        return f"LLM API 配额超限（429），请稍后再试。{debug}"
+    if "timeout" in error_lower or "timed out" in error_lower:
+        return f"LLM API 请求超时，请重试。{debug}"
+    if "400" in error_str or "invalidparameter" in error_lower:
+        return f"LLM 参数错误（400），工具参数格式可能不对。{debug}"
+    if "expa terror" in error_lower or "xml" in error_lower:
+        return f"LLM 返回格式异常（XML解析错误）。{debug}"
+    if "context_length" in error_lower or "maximum context" in error_lower or "too long" in error_lower:
+        return f"对话上下文过长，模型无法处理。{debug}"
+    if "500" in error_str or "internal server error" in error_lower:
+        return f"LLM 服务端错误（500），请重试或联系管理员。{debug}"
+    if "502" in error_str:
+        return f"LLM 网关错误（502），请重试。{debug}"
+    if "503" in error_str:
+        return f"LLM 服务暂时不可用（503），请稍后重试。{debug}"
+
+    return f"LLM 请求异常，无法生成完整分析。{debug}"
+
 # ──────────────────────────────────────────────
 # Model switching (per-session via ContextVar)
 # ──────────────────────────────────────────────
@@ -253,21 +283,45 @@ def agent_node(state: AgentState) -> dict:
     try:
         response = llm_with_tools.invoke(all_messages)
     except Exception as e:
+        import traceback
         error_str = str(e)
         _t1 = time.time()
-        logger.info("[TIMING] LLM invoke 失败 | 耗时=%.1fs | 错误=%s | 类型=%s",
-                    _t1 - _t0, error_str, type(e).__name__)
-        if "400" in error_str or "InvalidParameter" in error_str:
+        error_type = type(e).__name__
+        tb_str = traceback.format_exc()
+
+        # 提取关键信息：status_code、error code 等
+        status_code = getattr(e, 'status_code', None) or getattr(e, 'http_status', None)
+        api_code = getattr(e, 'code', None) or getattr(e, 'api_code', '')
+        body_text = getattr(e, 'body', None) or getattr(e, 'message', '')
+
+        logger.error("❌ LLM invoke 失败 | 耗时=%.1fs | 类型=%s | status=%s | api_code=%s\n  错误=%s\n  栈=%s",
+                     _t1 - _t0, error_type, status_code, api_code,
+                     error_str[:300], tb_str)
+
+        # 重试条件：超时/限流/400参数错误
+        error_lower = error_str.lower()
+        should_retry = (
+            "400" in error_str or "invalidparameter" in error_lower
+            or "timeout" in error_lower or "timed out" in error_lower
+            or status_code == 429 or "quota" in error_lower
+            or status_code == 502 or status_code == 503
+        )
+        if should_retry:
             logger.info("Retrying LLM invoke with minimal messages...")
             trimmed = messages[-6:] if len(messages) > 6 else messages
             fallback_messages = [("system", system_prompt)] + trimmed
             _t2 = time.time()
-            response = llm_with_tools.invoke(fallback_messages)
-            logger.info("[TIMING] LLM retry 完成 | 耗时=%.1fs", time.time() - _t2)
+            try:
+                response = llm_with_tools.invoke(fallback_messages)
+                logger.info("[TIMING] LLM retry 成功 | 耗时=%.1fs", time.time() - _t2)
+            except Exception as e2:
+                logger.error("❌ LLM retry 也失败 | 耗时=%.1fs | 类型=%s | 错误=%s\n%s",
+                             time.time() - _t2, type(e2).__name__, str(e2)[:200], traceback.format_exc())
+                from langchain_core.messages import AIMessage
+                response = AIMessage(content=_build_error_msg(error_str, error_type, status_code, api_code))
         else:
             from langchain_core.messages import AIMessage
-            logger.warning("LLM超时或异常，返回简略回复: %s | 类型=%s", error_str, type(e).__name__)
-            response = AIMessage(content="LLM请求超时，无法生成完整分析。请重试或检查网络/API状态。")
+            response = AIMessage(content=_build_error_msg(error_str, error_type, status_code, api_code))
     _t1 = time.time()
     tool_calls = getattr(response, 'tool_calls', None)
     if tool_calls:

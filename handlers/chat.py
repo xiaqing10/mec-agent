@@ -182,7 +182,7 @@ async def handle_chat(request):
             "pending_feedback": pending
         })
     except Exception as e:
-        logger.error("❌ LangGraph执行失败: %s", e)
+        logger.error("❌ LangGraph执行失败: %s | 类型=%s", str(e), type(e).__name__, exc_info=True)
         return web.json_response({"success": False, "error": f"处理失败: {str(e)}"}, status=500)
     finally:
         try:
