@@ -430,17 +430,16 @@ def build_agent():
 
 
 async def build_agent_async():
-    """Build and compile the LangGraph agent with async SQLite checkpointer.
+    """Build and compile the LangGraph agent with in-memory checkpointer.
 
-    Returns (compiled_graph, context_manager) — the context_manager must be
-    kept alive (not exited) for the database connection to stay open.
-    Call `await context_manager.aclose()` on shutdown.
+    Uses MemorySaver (no SQLite) — avoids AsyncSqliteSaver thread check errors
+    introduced in langgraph-checkpoint-sqlite >= 3.0.
+    Session history is kept in process memory per thread_id.
     """
-    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-    ctx = AsyncSqliteSaver.from_conn_string(str(SELF_AGENT_DIR / "checkpoints.db"))
-    memory = await ctx.__aenter__()
+    from langgraph.checkpoint.memory import MemorySaver
+    memory = MemorySaver()
     graph = build_agent_with_checkpointer(memory)
-    return graph, ctx
+    return graph, memory
 
 
 def build_agent_with_checkpointer(memory):
