@@ -8,3 +8,6 @@ checkpoints.db
 .env
 run.sh
 *.db
+*.db-shm
+*.db-wal
+*.db
