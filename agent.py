@@ -277,7 +277,7 @@ def agent_node(state: AgentState) -> dict:
     msg_count = len(all_messages)
     msg_chars = sum(len(str(m)) for m in all_messages)
     user_label = f"用户={user_id}" if user_id else "用户=未知"
-    logger.warning("🚀 [TIMING] LLM invoke 开始 | %s | 消息数=%d | 字符数=%d | 用户消息=%s",
+    logger.info("🚀 [USER:%s] LLM invoke 开始 | 消息数=%d | 字符数=%d | 用户消息=%s",
                    user_label, msg_count, msg_chars,
                    (messages[-1].content[:80] if messages else ''))
     try:
