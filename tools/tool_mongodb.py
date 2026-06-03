@@ -245,11 +245,13 @@ def query_server_traffic_flow(
     try:
         # 查询 flow 集合，在 Python 中过滤 Stats 数组
         # flow 集合中每个时间点有多个车道记录：Lane=1,2,3,4,5,6,0,ALL
-        # 用户的数据只取 Direction=双向, LaneNum=ALL 的汇总记录
+        # 双向+ALL 是汇总记录，各车道记录是明细
         cursor = db["flow"].find(match, {"Stats": 1, "Timestamp": 1}).sort("Timestamp", 1)
 
-        # 按 (roadName) 聚合
+        # 双向汇总聚合
         agg = {}
+        # 车道聚合：{roadName: {laneNum: {data}}}
+        lane_agg = {}
         for doc in cursor:
             for s in doc.get("Stats", []):
                 rn = s.get("RoadName", "")
@@ -257,35 +259,55 @@ def query_server_traffic_flow(
                 ln = s.get("LaneNum", "")
                 tc = s.get("TotalCount", 0)
 
-                # 过滤条件：只取双向+ALL 的汇总记录
                 if road_name and rn != road_name:
-                    continue
-                if dr != "双向" or ln != "ALL":
-                    continue
-                if direction and direction != "双向":
                     continue
                 if tc <= 0:
                     continue
 
-                key = rn
-                if key not in agg:
-                    agg[key] = {
-                        "roadName": rn, "direction": "双向",
-                        "records": 0, "totalCount": 0, "carCount": 0, "truckCount": 0,
-                        "busCount": 0, "vanCount": 0, "nonVehicleCount": 0,
-                        "weightedVel": 0, "timeOccupancySum": 0, "spaceOccupancySum": 0,
-                    }
-                a = agg[key]
-                a["records"] += 1
-                a["totalCount"] += tc
-                a["carCount"] += s.get("CarCount", 0)
-                a["truckCount"] += s.get("TruckCount", 0)
-                a["busCount"] += s.get("BusCount", 0)
-                a["vanCount"] += s.get("VanCount", 0)
-                a["nonVehicleCount"] += s.get("NonVehicleCount", 0)
-                a["weightedVel"] += s.get("AvgVelocity", 0) * tc
-                a["timeOccupancySum"] += s.get("TimeOccupancy", 0)
-                a["spaceOccupancySum"] += s.get("SpaceOccupancy", 0)
+                # 双向+ALL 汇总记录
+                if dr == "双向" and ln == "ALL":
+                    if direction and direction != "双向":
+                        continue
+                    key = rn
+                    if key not in agg:
+                        agg[key] = {
+                            "roadName": rn, "direction": "双向",
+                            "records": 0, "totalCount": 0, "carCount": 0, "truckCount": 0,
+                            "busCount": 0, "vanCount": 0, "nonVehicleCount": 0,
+                            "weightedVel": 0, "timeOccupancySum": 0, "spaceOccupancySum": 0,
+                        }
+                    a = agg[key]
+                    a["records"] += 1
+                    a["totalCount"] += tc
+                    a["carCount"] += s.get("CarCount", 0)
+                    a["truckCount"] += s.get("TruckCount", 0)
+                    a["busCount"] += s.get("BusCount", 0)
+                    a["vanCount"] += s.get("VanCount", 0)
+                    a["nonVehicleCount"] += s.get("NonVehicleCount", 0)
+                    a["weightedVel"] += s.get("AvgVelocity", 0) * tc
+                    a["timeOccupancySum"] += s.get("TimeOccupancy", 0)
+                    a["spaceOccupancySum"] += s.get("SpaceOccupancy", 0)
+
+                # 各车道记录（Lane=1~6 或 Lane=0）
+                elif ln != "ALL":
+                    if direction and dr != direction:
+                        continue
+                    if rn not in lane_agg:
+                        lane_agg[rn] = {}
+                    if ln not in lane_agg[rn]:
+                        lane_agg[rn][ln] = {
+                            "roadName": rn, "direction": dr, "laneNum": ln,
+                            "records": 0, "totalCount": 0, "carCount": 0, "truckCount": 0,
+                            "weightedVel": 0, "timeOccupancySum": 0, "spaceOccupancySum": 0,
+                        }
+                    la = lane_agg[rn][ln]
+                    la["records"] += 1
+                    la["totalCount"] += tc
+                    la["carCount"] += s.get("CarCount", 0)
+                    la["truckCount"] += s.get("TruckCount", 0)
+                    la["weightedVel"] += s.get("AvgVelocity", 0) * tc
+                    la["timeOccupancySum"] += s.get("TimeOccupancy", 0)
+                    la["spaceOccupancySum"] += s.get("SpaceOccupancy", 0)
 
         results = sorted(agg.values(), key=lambda x: -x["totalCount"])
     except Exception as e:
@@ -294,52 +316,53 @@ def query_server_traffic_flow(
     if not results:
         return "⚠️ 指定条件下未查询到流量数据。"
 
-    # 按方向汇总
-    dir_summary = {}
-    for r in results:
-        d = r["direction"]
-        if d not in dir_summary:
-            dir_summary[d] = {"total": 0, "weightedVel": 0, "tmOccSum": 0, "spOccSum": 0, "records": 0}
-        s = dir_summary[d]
-        s["total"] += r["totalCount"]
-        s["weightedVel"] += r["weightedVel"]
-        s["tmOccSum"] += r["timeOccupancySum"]
-        s["spOccSum"] += r["spaceOccupancySum"]
-        s["records"] += r["records"]
-
     lines = ["📊 **断面流量统计**\n"]
     if start_time or end_time:
         lines.append(f"时间: {start_time or '不限'} ~ {end_time or '不限'}")
     else:
         lines.append(f"时间: 最近一小时")
     lines.append("")
+
+    # 双向汇总表
+    lines.append("**双向汇总:**")
     lines.append("| 路段 | 方向 | 总车数 | 小车 | 货车 | 客车 | 非机动车 | 均速(km/h) | 时间占有率 | 空间占有率 |")
     lines.append("|------|------|--------|------|------|------|----------|------------|------------|------------|")
     for r in results:
         recs = max(r["records"], 1)
         avg_vel = r["weightedVel"] / max(r["totalCount"], 1)
-        avg_tm = r["timeOccupancySum"] / recs
-        avg_sp = r["spaceOccupancySum"] / recs
+        # 双向+ALL 记录的时间占有率可能为0，优先从 Lane=0 的记录获取
+        tm = r["timeOccupancySum"] / recs
+        sp = r["spaceOccupancySum"] / recs
+        rn = r["roadName"]
+        if tm == 0 and rn in lane_agg and "0" in lane_agg[rn]:
+            # 从 Lane=0 记录获取时间占有率和空间占有率
+            lane0 = lane_agg[rn]["0"]
+            lane0_recs = max(lane0["records"], 1)
+            tm = lane0["timeOccupancySum"] / lane0_recs
+            sp = lane0["spaceOccupancySum"] / lane0_recs
         lines.append(
             f"| {r['roadName']} | {r['direction']} | "
             f"{r['totalCount']} | {r['carCount']} | {r['truckCount']} | "
             f"{r['busCount']} | {r['nonVehicleCount']} | "
-            f"{avg_vel:.1f} | {avg_tm*100:.1f}% | {avg_sp*100:.1f}% |"
+            f"{avg_vel:.1f} | {tm*100:.1f}% | {sp*100:.1f}% |"
         )
 
-    # 分方向汇总
-    lines.append("\n📌 **按方向汇总:**")
-    grand_total = 0
-    grand_weighted_vel = 0
-    for d, s in sorted(dir_summary.items()):
-        avg_vel = s["weightedVel"] / max(s["total"], 1)
-        avg_tm = s["tmOccSum"] / max(s["records"], 1)
-        avg_sp = s["spOccSum"] / max(s["records"], 1)
-        lines.append(f"  {d}: {s['total']}辆, 加权均速 {avg_vel:.1f} km/h, 时间占有率 {avg_tm*100:.1f}%, 空间占有率 {avg_sp*100:.1f}%")
-        grand_total += s["total"]
-        grand_weighted_vel += s["weightedVel"]
-    grand_avg_vel = grand_weighted_vel / max(grand_total, 1)
-    lines.append(f"  **合计: {grand_total}辆, 加权均速 {grand_avg_vel:.1f} km/h**")
+    # 车道明细表
+    if lane_agg:
+        lines.append("\n**车道明细:**")
+        lines.append("| 路段 | 方向 | 车道 | 总车数 | 小车 | 货车 | 均速(km/h) |")
+        lines.append("|------|------|------|--------|------|------|------------|")
+        for rn in sorted(lane_agg.keys()):
+            for ln in sorted(lane_agg[rn].keys(), key=lambda x: (x != "0", x)):
+                la = lane_agg[rn][ln]
+                recs = max(la["records"], 1)
+                avg_vel = la["weightedVel"] / max(la["totalCount"], 1)
+                lines.append(
+                    f"| {la['roadName']} | {la['direction']} | {la['laneNum']} | "
+                    f"{la['totalCount']} | {la['carCount']} | {la['truckCount']} | "
+                    f"{avg_vel:.1f} |"
+                )
+
     return "\n".join(lines)
 
 
