@@ -144,7 +144,7 @@ async def handle_chat(request):
     try:
         from langchain_core.messages import HumanMessage
         agent = await get_agent()
-        config = {"configurable": {"thread_id": session_id}}
+        config = {"configurable": {"thread_id": session_id, "recursion_limit": 50}}
 
         state = await agent.aget_state(config)
         history = (state.values.get("messages", []) if state and state.values else [])
@@ -262,7 +262,7 @@ async def handle_chat_stream(request):
 
         await _send("info", {"status": "started", "session_id": session_id})
 
-        config = {"configurable": {"thread_id": session_id}}
+        config = {"configurable": {"thread_id": session_id, "recursion_limit": 50}}
 
         current_tool = None
         tool_output_lines = []

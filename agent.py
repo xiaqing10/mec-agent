@@ -463,7 +463,7 @@ def build_agent_with_checkpointer(memory):
     graph.add_edge("tools", "agent")
     graph.add_edge("update_context", "feedback")
     graph.add_edge("feedback", END)
-    return graph.compile(checkpointer=memory, recursion_limit=50)
+    return graph.compile(checkpointer=memory)
 
 
 # ──────────────────────────────────────────────
