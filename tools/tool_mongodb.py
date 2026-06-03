@@ -151,11 +151,14 @@ def query_server_traffic_flow(
     平均速度（AvgVelocity）、时间占有率（TimeOccupancy）、空间占有率（SpaceOccupancy）、
     车头时距（headwayTime）、车头间距（headwaySpace）、道路状态（RoadStatus 畅行/拥堵）。
 
+    注意：每条记录已包含该分钟内的累计车数。同一时间点存在"上行"、"下行"、"双向"三种记录，
+    其中"双向"="上行"+"下行"。本工具只统计上行和下行，排除双向记录以避免重复计算。
+
     Args:
         road_name: 道路名/桩号，如 "K7+197"、"K6+230"（可选，不传则查所有）
         start_time: 开始时间，格式 "2026-05-01 00:00:00" 或 "2026-05-01"（可选）
         end_time: 结束时间，格式同上（可选，默认最近一小时）
-        direction: 行驶方向，"上行"/"下行"（可选，默认不限制）
+        direction: 行驶方向，"上行"/"下行"（可选，默认不限制，但会排除"双向"记录）
     """
     db = _get_mongo()
     time_filter = _parse_time_filter(start_time, end_time, field="EndTime") or {
@@ -170,6 +173,8 @@ def query_server_traffic_flow(
         pipeline = [
             {"$match": match},
             {"$match": {"TotalCount": {"$gt": 0}}},
+            # 排除双向记录（双向=上行+下行，会导致重复计算）
+            {"$match": {"Direction": {"$ne": "双向"}}},
         ]
         if direction:
             pipeline.append({"$match": {"Direction": direction}})
@@ -206,6 +211,15 @@ def query_server_traffic_flow(
     if not results:
         return "⚠️ 指定条件下未查询到流量数据。"
 
+    # 按方向汇总
+    dir_summary = {}
+    for r in results:
+        d = r["_id"]["direction"]
+        if d not in dir_summary:
+            dir_summary[d] = {"total": 0, "weighted_vel": 0}
+        dir_summary[d]["total"] += r["totalCount"]
+        dir_summary[d]["weighted_vel"] += r["avgVelocity"] * r["totalCount"]
+
     lines = ["📊 **断面流量统计**\n"]
     if start_time or end_time:
         lines.append(f"时间: {start_time or '不限'} ~ {end_time or '不限'}")
@@ -223,11 +237,17 @@ def query_server_traffic_flow(
             f"{r['avgVelocity']:.1f} | {r['avgTimeOccupancy']*100:.1f}% | {r['roadStatus']} |"
         )
 
-    summary = {
-        "total_vehicles": sum(r["totalCount"] for r in results),
-        "avg_velocity": sum(r["avgVelocity"] * r["totalCount"] for r in results) / max(sum(r["totalCount"] for r in results), 1),
-    }
-    lines.append(f"\n📌 总车流: {summary['total_vehicles']}辆 | 加权平均速度: {summary['avg_velocity']:.1f} km/h")
+    # 分方向汇总
+    lines.append("\n📌 **按方向汇总:**")
+    grand_total = 0
+    grand_weighted_vel = 0
+    for d, s in sorted(dir_summary.items()):
+        avg_vel = s["weighted_vel"] / max(s["total"], 1)
+        lines.append(f"  {d}: {s['total']}辆, 加权均速 {avg_vel:.1f} km/h")
+        grand_total += s["total"]
+        grand_weighted_vel += s["weighted_vel"]
+    grand_avg_vel = grand_weighted_vel / max(grand_total, 1)
+    lines.append(f"  **合计: {grand_total}辆, 加权均速 {grand_avg_vel:.1f} km/h**")
     return "\n".join(lines)
 
 
@@ -507,6 +527,8 @@ def query_server_traffic_pattern(
 
     数据来源：MongoDB radarData.flowStat 集合（1分钟粒度预聚合）。
     可用于：了解交通流量的日/时变化规律、识别早晚高峰、分析拥堵时段。
+    注意：每条记录已包含该分钟内的累计车数。同一时间点存在"上行"、"下行"、"双向"三种记录，
+    其中"双向"="上行"+"下行"。本工具只统计上行和下行，排除双向记录以避免重复计算。
 
     Args:
         start_time: 开始时间，格式 "2026-05-01 00:00:00"
@@ -527,6 +549,8 @@ def query_server_traffic_pattern(
         pipeline = [
             {"$match": match},
             {"$match": {"TotalCount": {"$gt": 0}}},
+            # 排除双向记录（双向=上行+下行，会导致重复计算）
+            {"$match": {"Direction": {"$ne": "双向"}}},
         ]
         if road_name:
             pipeline.append({"$match": {"RoadName": road_name}})
@@ -587,6 +611,8 @@ def query_server_traffic_pattern(
         ts_pipeline = [
             {"$match": ts_match},
             {"$match": {"TotalCount": {"$gt": 0}}},
+            # 排除双向记录
+            {"$match": {"Direction": {"$ne": "双向"}}},
             {
                 "$group": {
                     "_id": {
