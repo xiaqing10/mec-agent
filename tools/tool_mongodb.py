@@ -105,6 +105,64 @@ def _parse_time_filter(start_time, end_time, field="creatTime"):
     return {field: query} if query else {}
 
 
+def _build_timestamp_regex(start_time: str, end_time: str) -> dict:
+    """将时间范围转为 Timestamp 字段的正则匹配条件。
+
+    flow 集合的 Timestamp 字段格式: "2026-06-02 00:00:00.38"
+    需要生成正则表达式来匹配时间范围内的记录。
+
+    Returns:
+        MongoDB $regex 正则表达式
+    """
+    def _parse_ts(s):
+        if isinstance(s, datetime):
+            return s
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(s, fmt)
+            except ValueError:
+                continue
+        return None
+
+    start_dt = _parse_ts(start_time) if start_time else None
+    end_dt = _parse_ts(end_time) if end_time else None
+
+    if not start_dt and not end_dt:
+        now = datetime.now()
+        return {"$regex": now.strftime("^%Y-%m-%d %H:%M")}
+
+    if start_dt and end_dt:
+        if start_dt.date() == end_dt.date():
+            if start_dt.hour == end_dt.hour:
+                date_str = start_dt.strftime("%Y-%m-%d")
+                hour = start_dt.hour
+                min_start = start_dt.minute
+                min_end = end_dt.minute
+                if min_start == 0 and min_end == 59:
+                    return {"$regex": f"^{date_str} {hour:02d}:"}
+                # 生成分钟字符类
+                minute_str = "".join(str(i) for i in range(min_start, min_end + 1))
+                return {"$regex": f"^{date_str} {hour:02d}:0[{minute_str}]"}
+            else:
+                date_str = start_dt.strftime("%Y-%m-%d")
+                hours = list(range(start_dt.hour, end_dt.hour + 1))
+                if len(hours) <= 3:
+                    hour_class = "".join(str(h) for h in hours)
+                    return {"$regex": f"^{date_str} [{hour_class}]:"}
+                else:
+                    return {"$regex": f"^{date_str} "}
+        else:
+            # 跨天: 简化处理，匹配日期范围
+            return {"$regex": f"^{start_dt.strftime('%Y-%m-%d')} "}
+
+    if start_dt:
+        return {"$gte": start_dt.strftime("%Y-%m-%d %H:%M:%S")}
+    if end_dt:
+        return {"$lte": end_dt.strftime("%Y-%m-%d %H:%M:%S")}
+
+    return {"$regex": datetime.now().strftime("^%Y-%m-%d %H:%M")}
+
+
 def _llm_analysis(prompt: str, system: str = "") -> str:
     """内部调用 LLM 对聚合数据进行二次分析。"""
     from config import AVAILABLE_MODELS
@@ -146,13 +204,18 @@ def query_server_traffic_flow(
 ) -> str:
     """查询指定路段和时间段的断面流量数据。
 
-    数据来源：MongoDB radarData.flowStat 集合（1分钟粒度预聚合）。
+    数据来源：MongoDB radarData.flow 集合（1分钟粒度，嵌套数组结构）。
+    每条文档包含 Stats 数组，每个元素是一条车道的记录。
     包含：各车道车流量（TotalCount/CarCount/TruckCount/BusCount/VanCount/NonVehicleCount）、
-    平均速度（AvgVelocity）、时间占有率（TimeOccupancy）、空间占有率（SpaceOccupancy）、
-    车头时距（headwayTime）、车头间距（headwaySpace）、道路状态（RoadStatus 畅行/拥堵）。
+    平均速度（AvgVelocity）、时间占有率（TimeOccupancy）、空间占有率（SpaceOccupancy）。
 
-    注意：每条记录已包含该分钟内的累计车数。同一时间点存在"上行"、"下行"、"双向"三种记录，
-    其中"双向"="上行"+"下行"。本工具只统计上行和下行，排除双向记录以避免重复计算。
+    计算规则：
+    - 流量（TotalCount/CarCount 等）：各分钟记录累加
+    - 占有率（TimeOccupancy/SpaceOccupancy）：各分钟记录取平均
+    - 平均车速（AvgVelocity）：加权平均（每分钟速度 × 该分钟流量 / 总流量）
+
+    注意：同一时间点存在"上行"、"下行"、"双向"三种记录，其中"双向"="上行"+"下行"。
+    本工具只统计上行和下行，排除双向记录以避免重复计算。
 
     Args:
         road_name: 道路名/桩号，如 "K7+197"、"K6+230"（可选，不传则查所有）
@@ -161,50 +224,70 @@ def query_server_traffic_flow(
         direction: 行驶方向，"上行"/"下行"（可选，默认不限制，但会排除"双向"记录）
     """
     db = _get_mongo()
-    time_filter = _parse_time_filter(start_time, end_time, field="EndTime") or {
-        "EndTime": {"$gte": datetime.now() - timedelta(minutes=15)}
-    }
 
-    match = dict(time_filter)
+    # flow 集合中 Timestamp 字段存储的是实际数据时间（字符串格式）
+    # creatTime 字段存储的是入库时间，两者数据不同
+    # 用户看到的数据来自 Timestamp 字段，所以用 Timestamp 过滤
+    if start_time or end_time:
+        # 将时间字符串转为 Timestamp 正则格式
+        # 例如 "2026-06-02 00:00:00" -> "2026-06-02 00:00"
+        # 或者 "2026-06-02 00:00:00" ~ "2026-06-02 00:05:00" -> "2026-06-02 00:0[0-4]"
+        ts_match = _build_timestamp_regex(start_time, end_time)
+        match = {"Timestamp": ts_match}
+    else:
+        # 默认最近15分钟
+        now = datetime.now()
+        match = {"Timestamp": {"$regex": now.strftime("^%Y-%m-%d %H:%M")}}
+
     if road_name:
-        match["RoadName"] = road_name
+        match["Stats.RoadName"] = road_name
 
     try:
-        pipeline = [
-            {"$match": match},
-            {"$match": {"TotalCount": {"$gt": 0}}},
-            # 排除双向记录（双向=上行+下行，会导致重复计算）
-            {"$match": {"Direction": {"$ne": "双向"}}},
-        ]
-        if direction:
-            pipeline.append({"$match": {"Direction": direction}})
-        pipeline.extend([
-            {
-                "$group": {
-                    "_id": {
-                        "roadName": "$RoadName",
-                        "direction": "$Direction",
-                        "laneNum": "$LaneNum",
-                    },
-                    "records": {"$sum": 1},
-                    "totalCount": {"$sum": "$TotalCount"},
-                    "carCount": {"$sum": "$CarCount"},
-                    "truckCount": {"$sum": "$TruckCount"},
-                    "busCount": {"$sum": "$BusCount"},
-                    "vanCount": {"$sum": "$VanCount"},
-                    "nonVehicleCount": {"$sum": "$NonVehicleCount"},
-                    "avgVelocity": {"$avg": "$AvgVelocity"},
-                    "avgTimeOccupancy": {"$avg": "$TimeOccupancy"},
-                    "avgSpaceOccupancy": {"$avg": "$SpaceOccupancy"},
-                    "avgHeadwayTime": {"$avg": "$headwayTime"},
-                    "avgHeadwaySpace": {"$avg": "$headwaySpace"},
-                    "roadStatus": {"$last": "$RoadStatus"},
-                }
-            },
-            {"$sort": {"totalCount": -1}},
-            {"$limit": 30},
-        ])
-        results = list(db["flowStat"].aggregate(pipeline, allowDiskUse=True))
+        # 查询 flow 集合，在 Python 中过滤 Stats 数组
+        # flow 集合中每个时间点有多个车道记录：Lane=1,2,3,4,5,6,0,ALL
+        # 用户的数据只取 Direction=双向, LaneNum=ALL 的汇总记录
+        cursor = db["flow"].find(match, {"Stats": 1, "Timestamp": 1}).sort("Timestamp", 1)
+
+        # 按 (roadName) 聚合
+        agg = {}
+        for doc in cursor:
+            for s in doc.get("Stats", []):
+                rn = s.get("RoadName", "")
+                dr = s.get("Direction", "")
+                ln = s.get("LaneNum", "")
+                tc = s.get("TotalCount", 0)
+
+                # 过滤条件：只取双向+ALL 的汇总记录
+                if road_name and rn != road_name:
+                    continue
+                if dr != "双向" or ln != "ALL":
+                    continue
+                if direction and direction != "双向":
+                    continue
+                if tc <= 0:
+                    continue
+
+                key = rn
+                if key not in agg:
+                    agg[key] = {
+                        "roadName": rn, "direction": "双向",
+                        "records": 0, "totalCount": 0, "carCount": 0, "truckCount": 0,
+                        "busCount": 0, "vanCount": 0, "nonVehicleCount": 0,
+                        "weightedVel": 0, "timeOccupancySum": 0, "spaceOccupancySum": 0,
+                    }
+                a = agg[key]
+                a["records"] += 1
+                a["totalCount"] += tc
+                a["carCount"] += s.get("CarCount", 0)
+                a["truckCount"] += s.get("TruckCount", 0)
+                a["busCount"] += s.get("BusCount", 0)
+                a["vanCount"] += s.get("VanCount", 0)
+                a["nonVehicleCount"] += s.get("NonVehicleCount", 0)
+                a["weightedVel"] += s.get("AvgVelocity", 0) * tc
+                a["timeOccupancySum"] += s.get("TimeOccupancy", 0)
+                a["spaceOccupancySum"] += s.get("SpaceOccupancy", 0)
+
+        results = sorted(agg.values(), key=lambda x: -x["totalCount"])
     except Exception as e:
         return json.dumps({"error": f"流量查询失败: {e}"}, ensure_ascii=False)
 
@@ -214,11 +297,15 @@ def query_server_traffic_flow(
     # 按方向汇总
     dir_summary = {}
     for r in results:
-        d = r["_id"]["direction"]
+        d = r["direction"]
         if d not in dir_summary:
-            dir_summary[d] = {"total": 0, "weighted_vel": 0}
-        dir_summary[d]["total"] += r["totalCount"]
-        dir_summary[d]["weighted_vel"] += r["avgVelocity"] * r["totalCount"]
+            dir_summary[d] = {"total": 0, "weightedVel": 0, "tmOccSum": 0, "spOccSum": 0, "records": 0}
+        s = dir_summary[d]
+        s["total"] += r["totalCount"]
+        s["weightedVel"] += r["weightedVel"]
+        s["tmOccSum"] += r["timeOccupancySum"]
+        s["spOccSum"] += r["spaceOccupancySum"]
+        s["records"] += r["records"]
 
     lines = ["📊 **断面流量统计**\n"]
     if start_time or end_time:
@@ -226,15 +313,18 @@ def query_server_traffic_flow(
     else:
         lines.append(f"时间: 最近一小时")
     lines.append("")
-    lines.append("| 路段 | 方向 | 车道 | 总车数 | 小车 | 货车 | 客车 | 非机动车 | 均速(km/h) | 时间占有率 | 状态 |")
-    lines.append("|------|------|------|--------|------|------|------|----------|------------|------------|------|")
+    lines.append("| 路段 | 方向 | 总车数 | 小车 | 货车 | 客车 | 非机动车 | 均速(km/h) | 时间占有率 | 空间占有率 |")
+    lines.append("|------|------|--------|------|------|------|----------|------------|------------|------------|")
     for r in results:
-        rid = r["_id"]
+        recs = max(r["records"], 1)
+        avg_vel = r["weightedVel"] / max(r["totalCount"], 1)
+        avg_tm = r["timeOccupancySum"] / recs
+        avg_sp = r["spaceOccupancySum"] / recs
         lines.append(
-            f"| {rid['roadName']} | {rid['direction']} | {rid['laneNum']} | "
+            f"| {r['roadName']} | {r['direction']} | "
             f"{r['totalCount']} | {r['carCount']} | {r['truckCount']} | "
             f"{r['busCount']} | {r['nonVehicleCount']} | "
-            f"{r['avgVelocity']:.1f} | {r['avgTimeOccupancy']*100:.1f}% | {r['roadStatus']} |"
+            f"{avg_vel:.1f} | {avg_tm*100:.1f}% | {avg_sp*100:.1f}% |"
         )
 
     # 分方向汇总
@@ -242,10 +332,12 @@ def query_server_traffic_flow(
     grand_total = 0
     grand_weighted_vel = 0
     for d, s in sorted(dir_summary.items()):
-        avg_vel = s["weighted_vel"] / max(s["total"], 1)
-        lines.append(f"  {d}: {s['total']}辆, 加权均速 {avg_vel:.1f} km/h")
+        avg_vel = s["weightedVel"] / max(s["total"], 1)
+        avg_tm = s["tmOccSum"] / max(s["records"], 1)
+        avg_sp = s["spOccSum"] / max(s["records"], 1)
+        lines.append(f"  {d}: {s['total']}辆, 加权均速 {avg_vel:.1f} km/h, 时间占有率 {avg_tm*100:.1f}%, 空间占有率 {avg_sp*100:.1f}%")
         grand_total += s["total"]
-        grand_weighted_vel += s["weighted_vel"]
+        grand_weighted_vel += s["weightedVel"]
     grand_avg_vel = grand_weighted_vel / max(grand_total, 1)
     lines.append(f"  **合计: {grand_total}辆, 加权均速 {grand_avg_vel:.1f} km/h**")
     return "\n".join(lines)
@@ -525,10 +617,16 @@ def query_server_traffic_pattern(
 ) -> str:
     """综合交通流分析：按时间段粒度聚合流量数据，生成时间序列趋势。
 
-    数据来源：MongoDB radarData.flowStat 集合（1分钟粒度预聚合）。
+    数据来源：MongoDB radarData.flow 集合（1分钟粒度，嵌套数组结构）。
     可用于：了解交通流量的日/时变化规律、识别早晚高峰、分析拥堵时段。
-    注意：每条记录已包含该分钟内的累计车数。同一时间点存在"上行"、"下行"、"双向"三种记录，
-    其中"双向"="上行"+"下行"。本工具只统计上行和下行，排除双向记录以避免重复计算。
+
+    计算规则：
+    - 流量：各分钟记录累加
+    - 占有率：各分钟记录取平均
+    - 平均车速：加权平均（每分钟速度 × 该分钟流量 / 总流量）
+
+    注意：同一时间点存在"上行"、"下行"、"双向"三种记录，其中"双向"="上行"+"下行"。
+    本工具只统计上行和下行，排除双向记录以避免重复计算。
 
     Args:
         start_time: 开始时间，格式 "2026-05-01 00:00:00"
@@ -537,43 +635,73 @@ def query_server_traffic_pattern(
         interval_minutes: 聚合时间粒度（分钟），默认 60（即按小时聚合）
     """
     db = _get_mongo()
-    time_filter = _parse_time_filter(start_time, end_time, field="EndTime") or {
-        "EndTime": {"$gte": datetime.now() - timedelta(hours=6)}
-    }
 
-    match = dict(time_filter)
+    # 使用 Timestamp 字段过滤（与 query_server_traffic_flow 一致）
+    if start_time or end_time:
+        ts_match = _build_timestamp_regex(start_time, end_time)
+        match = {"Timestamp": ts_match}
+    else:
+        now = datetime.now()
+        match = {"Timestamp": {"$regex": now.strftime("^%Y-%m-%d %H")}}
+
     if road_name:
-        match["RoadName"] = road_name
+        match["Stats.RoadName"] = road_name
 
     try:
-        pipeline = [
-            {"$match": match},
-            {"$match": {"TotalCount": {"$gt": 0}}},
-            # 排除双向记录（双向=上行+下行，会导致重复计算）
-            {"$match": {"Direction": {"$ne": "双向"}}},
-        ]
-        if road_name:
-            pipeline.append({"$match": {"RoadName": road_name}})
-        pipeline.append({
-            "$group": {
-                "_id": {
-                    "roadName": "$RoadName",
-                    "direction": "$Direction",
-                },
-                "totalVehicles": {"$sum": "$TotalCount"},
-                "avgVelocity": {"$avg": "$AvgVelocity"},
-                "maxVelocity": {"$max": "$AvgVelocity"},
-                "minVelocity": {"$min": "$AvgVelocity"},
-                "avgTimeOccupancy": {"$avg": "$TimeOccupancy"},
-                "avgSpaceOccupancy": {"$avg": "$SpaceOccupancy"},
-                "records": {"$sum": 1},
-                "truckCount": {"$sum": "$TruckCount"},
-                "busCount": {"$sum": "$BusCount"},
-                "avgHeadwayTime": {"$avg": "$headwayTime"},
-            }
-        })
-        pipeline.append({"$sort": {"totalVehicles": -1}})
-        results = list(db["flowStat"].aggregate(pipeline, allowDiskUse=True))
+        # 查询 flow 集合，在 Python 中过滤和聚合
+        cursor = db["flow"].find(match, {"Stats": 1, "Timestamp": 1}).sort("Timestamp", 1)
+
+        # 按 (roadName) 聚合
+        agg = {}
+        hourly = {}
+
+        for doc in cursor:
+            ts = doc.get("Timestamp", "")
+            # 从 Timestamp 字符串中提取小时
+            hour = int(ts[11:13]) if len(ts) >= 13 else 0
+
+            for s in doc.get("Stats", []):
+                rn = s.get("RoadName", "")
+                dr = s.get("Direction", "")
+                ln = s.get("LaneNum", "")
+                tc = s.get("TotalCount", 0)
+
+                if road_name and rn != road_name:
+                    continue
+                if dr != "双向" or ln != "ALL":
+                    continue
+                if tc <= 0:
+                    continue
+
+                key = rn
+                if key not in agg:
+                    agg[key] = {
+                        "roadName": rn, "direction": "双向",
+                        "totalVehicles": 0, "weightedVel": 0, "maxVel": 0, "minVel": float("inf"),
+                        "timeOccSum": 0, "spaceOccSum": 0, "records": 0,
+                        "truckCount": 0, "busCount": 0,
+                    }
+                a = agg[key]
+                a["totalVehicles"] += tc
+                a["weightedVel"] += s.get("AvgVelocity", 0) * tc
+                a["maxVel"] = max(a["maxVel"], s.get("AvgVelocity", 0))
+                a["minVel"] = min(a["minVel"], s.get("AvgVelocity", 0))
+                a["timeOccSum"] += s.get("TimeOccupancy", 0)
+                a["spaceOccSum"] += s.get("SpaceOccupancy", 0)
+                a["records"] += 1
+                a["truckCount"] += s.get("TruckCount", 0)
+                a["busCount"] += s.get("BusCount", 0)
+
+                # 时段分析
+                hkey = (rn, hour)
+                if hkey not in hourly:
+                    hourly[hkey] = {"roadName": rn, "hour": hour, "totalVehicles": 0, "weightedVel": 0}
+                h = hourly[hkey]
+                h["totalVehicles"] += tc
+                h["weightedVel"] += s.get("AvgVelocity", 0) * tc
+
+        results = sorted(agg.values(), key=lambda x: -x["totalVehicles"])
+        hourly_results = sorted(hourly.values(), key=lambda x: (x["roadName"], x["hour"]))
     except Exception as e:
         return json.dumps({"error": f"交通流分析失败: {e}"}, ensure_ascii=False)
 
@@ -584,67 +712,48 @@ def query_server_traffic_pattern(
     if start_time or end_time:
         lines.append(f"时间范围: {start_time or '不限'} ~ {end_time or '不限'}")
     else:
-        lines.append(f"时间范围: 最近24小时")
+        lines.append(f"时间范围: 最近6小时")
     lines.append(f"聚合粒度: {interval_minutes}分钟")
     lines.append("")
 
     total_all = sum(r["totalVehicles"] for r in results)
     lines.append(f"**总车流量: {total_all}辆**\n")
 
-    lines.append("| 路段 | 方向 | 总车数 | 均速 | 最高速 | 最低速 | 货车 | 客车 | 时间占有率 | 空间占有率 | 车头时距(s) |")
-    lines.append("|------|------|--------|------|--------|--------|------|------|------------|------------|-------------|")
+    lines.append("| 路段 | 方向 | 总车数 | 均速 | 最高速 | 最低速 | 货车 | 客车 | 时间占有率 | 空间占有率 |")
+    lines.append("|------|------|--------|------|--------|--------|------|------|------------|------------|")
     for r in results:
-        rid = r["_id"]
+        recs = max(r["records"], 1)
+        avg_vel = r["weightedVel"] / max(r["totalVehicles"], 1)
+        avg_tm = r["timeOccSum"] / recs
+        avg_sp = r["spaceOccSum"] / recs
         lines.append(
-            f"| {rid['roadName']} | {rid['direction']} | {r['totalVehicles']} | "
-            f"{r['avgVelocity']:.1f} | {r['maxVelocity']:.1f} | {r['minVelocity']:.1f} | "
+            f"| {r['roadName']} | {r['direction']} | {r['totalVehicles']} | "
+            f"{avg_vel:.1f} | {r['maxVel']:.1f} | {r['minVel']:.1f} | "
             f"{r['truckCount']} | {r['busCount']} | "
-            f"{r['avgTimeOccupancy']*100:.1f}% | {r['avgSpaceOccupancy']*100:.1f}% | {r['avgHeadwayTime']:.1f} |"
+            f"{avg_tm*100:.1f}% | {avg_sp*100:.1f}% |"
         )
 
-    # 时段分析（按小时聚合时间序列）
+    # 时段分析
     lines.append("\n**时段流量趋势（按小时）:**\n")
-    try:
-        ts_match = dict(time_filter)
-        if road_name:
-            ts_match["RoadName"] = road_name
-        ts_pipeline = [
-            {"$match": ts_match},
-            {"$match": {"TotalCount": {"$gt": 0}}},
-            # 排除双向记录
-            {"$match": {"Direction": {"$ne": "双向"}}},
-            {
-                "$group": {
-                    "_id": {
-                        "hour": {"$hour": "$EndTime"},
-                        "roadName": "$RoadName",
-                    },
-                    "totalVehicles": {"$sum": "$TotalCount"},
-                    "avgVelocity": {"$avg": "$AvgVelocity"},
-                }
-            },
-            {"$sort": {"_id.hour": 1}},
-        ]
-        ts_results = list(db["flowStat"].aggregate(ts_pipeline, allowDiskUse=True))
-
-        if ts_results:
-            lines.append("| 时段 | 路段 | 车流量 | 均速(km/h) |")
-            lines.append("|------|------|--------|------------|")
-            for r in ts_results:
-                lines.append(
-                    f"| {r['_id']['hour']:02d}:00-{r['_id']['hour']+1:02d}:00 | "
-                    f"{r['_id']['roadName']} | {r['totalVehicles']} | {r['avgVelocity']:.1f} |"
-                )
-    except Exception:
-        pass
+    if hourly_results:
+        lines.append("| 时段 | 路段 | 车流量 | 均速(km/h) |")
+        lines.append("|------|------|--------|------------|")
+        for h in hourly_results:
+            avg_vel = h["weightedVel"] / max(h["totalVehicles"], 1)
+            lines.append(
+                f"| {h['hour']:02d}:00-{h['hour']+1:02d}:00 | "
+                f"{h['roadName']} | {h['totalVehicles']} | {avg_vel:.1f} |"
+            )
 
     # 拥堵分析
-    congested = [r for r in results if r["avgTimeOccupancy"] > 0.3]
+    congested = [r for r in results if r["records"] > 0 and (r["timeOccSum"] / r["records"]) > 0.3]
     if congested:
         lines.append(f"\n⚠️ **高占有率路段（可能拥堵）:** ")
         for r in congested:
-            lines.append(f"  {r['_id']['roadName']} {r['_id']['direction']}: "
-                         f"占有率{r['avgTimeOccupancy']*100:.1f}%, 均速{r['avgVelocity']:.1f}km/h")
+            avg_tm = r["timeOccSum"] / max(r["records"], 1)
+            avg_vel = r["weightedVel"] / max(r["totalVehicles"], 1)
+            lines.append(f"  {r['roadName']} {r['direction']}: "
+                         f"占有率{avg_tm*100:.1f}%, 均速{avg_vel:.1f}km/h")
 
     return "\n".join(lines)
 
