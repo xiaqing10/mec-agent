@@ -52,8 +52,8 @@ async def handle_health(request):
 
 async def handle_version(request):
     return web.json_response({
-        "version": "3.2debug",
-        "service": "智慧交通垂域智能体 (LangGraph)",
+        "version": "3.3debug",
+        "service": "智慧交通垂域智能体",
         "features": ["日志分析", "设备诊断", "钉钉推送", "流式输出", "Markdown渲染", "LangGraph持久记忆"]
     })
 
@@ -86,9 +86,9 @@ async def handle_event_image(request):
     return web.FileResponse(filepath)
 
 
-def _parse_body(request):
+async def _parse_body(request):
     try:
-        return request.json()
+        return await request.json()
     except Exception:
         return None
 

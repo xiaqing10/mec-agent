@@ -1,10 +1,13 @@
 import json
+import logging
 import re
 from datetime import datetime
 
 from langchain_core.tools import tool
 
 from ._shared import _diag_progress_callback, _notify_progress, _summarize_log_errors, _build_diag_result
+
+logger = logging.getLogger(__name__)
 
 
 @tool

@@ -44,7 +44,7 @@ def feishu_analyze_logs(project: str = "") -> str:
 
     history = load_structured_history()
     comparison = compare_with_history(parsed, history)
-    report_text_output = generate_report(parsed, comparison, history)
+    report_text_output, _ = generate_report(parsed, comparison, history)
 
     phys_off_summary = {}
     for pname, pdata in parsed.get("projects", {}).items():

@@ -15,7 +15,6 @@ from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 
 SELF_AGENT_DIR = Path(__file__).parent
-SCRIPTS_DIR = Path("/home/sy/.hermes/scripts")
 LLM_PENDING_DIR = SELF_AGENT_DIR / "diagnose_logs" / "llm_pending"
 
 
@@ -354,8 +353,8 @@ def diagnose_project(project_name):
     sys.path.insert(0, str(SELF_AGENT_DIR))
 
     # 优先从数据库获取项目异常设备
-    from tools.tool_db import query_project_from_db
-    db_result = query_project_from_db.invoke({"project": project_name})
+    from tools.tool_db import query_mec_project_from_db
+    db_result = query_mec_project_from_db.invoke({"project": project_name})
     db_devices = []
     if "异常设备列表" in db_result:
         import re as _re

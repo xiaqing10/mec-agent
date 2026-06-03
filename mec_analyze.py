@@ -16,6 +16,9 @@ from pathlib import Path
 
 from config import FEISHU_APP_SECRET
 
+# 当前脚本所在目录
+SELF_AGENT_DIR = Path(__file__).parent
+
 # Feishu配置
 CHAT_ID = 'oc_20cfbf30aae8b296ece5318b52cddd73'
 APP_ID = 'cli_a965bcb58378dcd3'

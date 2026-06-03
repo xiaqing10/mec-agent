@@ -10,8 +10,9 @@ logger = logging.getLogger(__name__)
 
 def _get_users_config() -> dict:
     try:
-        from config import AVAILABLE_USERS
-        return AVAILABLE_USERS
+        from config import USERS
+        # USERS 格式是 {username: password}，转换为 {user_id: {"name": user_id}}
+        return {uid: {"name": uid} for uid in USERS.keys()}
     except (ImportError, AttributeError):
         return {}
 
