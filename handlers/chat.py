@@ -155,6 +155,144 @@ async def handle_chat(request):
                         len(trimmed), _count_msg_chars(trimmed))
             agent.update_state(config, {"messages": trimmed})
 
+        final_state = await agent.ainvoke(
+            {"messages": [HumanMessage(content=user_message)]},
+            config
+        )
+        reply = _fix_table_alignment(_extract_agent_reply(final_state) or "处理完成，但未生成回复。")
+
+        username = _get_username(request) or session_id
+        intent = final_state.get("conversation_intent", "")
+        pending = final_state.get("pending_feedback", False)
+        auto_correctness = final_state.get("auto_correctness")
+        if intent:
+            try:
+                from feedback_store import create_feedback_record
+                tool_msgs = [m for m in final_state.get("messages", []) if hasattr(m, 'type') and m.type == 'tool']
+                actions = [{"name": getattr(m, 'name', ''), "content": str(getattr(m, 'content', ''))[:100]} for m in tool_msgs[:10]]
+                create_feedback_record(session_id, user_id=username, intent=intent, actions=actions, auto_correctness=auto_correctness)
+            except Exception as e:
+                logger.warning("Failed to save feedback: %s", e)
+
+        return web.json_response({
+            "success": True,
+            "action": "chat",
+            "data": {"reply": reply},
+            "session_id": session_id,
+            "pending_feedback": pending
+        })
+    except Exception as e:
+        logger.error("❌ LangGraph执行失败: %s | 类型=%s", str(e), type(e).__name__, exc_info=True)
+        return web.json_response({"success": False, "error": f"处理失败: {str(e)}"}, status=500)
+    finally:
+        try:
+            username = _get_username(request)
+            if username and not _is_trivial(user_message):
+                from user_memory_store import extract_memories_from_conversation
+                extract_memories_from_conversation(username, user_message, reply if 'reply' in dir() else "", intent if 'intent' in dir() else "")
+        except Exception:
+            pass
+
+
+async def handle_chat_stream(request):
+    body = await _parse_body(request)
+    if not body:
+        return web.json_response({"success": False, "error": "请求体必须为JSON格式"}, status=400)
+
+    user_message = body.get("message", "").strip()
+    session_id = body.get("session_id", "default")
+    if not user_message:
+        return web.json_response({"success": False, "error": "message字段不能为空"}, status=400)
+
+    model_id = body.get("model", "")
+    if model_id:
+        from agent import switch_model
+        if switch_model(model_id):
+            logger.info("会话 %s 切换模型: %s", session_id, model_id)
+
+    from config import set_current_user_id
+    username = _get_username(request)
+    if username:
+        set_current_user_id(username)
+
+    response = web.StreamResponse(
+        status=200,
+        reason='OK',
+        headers={
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no',
+        }
+    )
+    await response.prepare(request)
+
+    async def _send(event_type: str, data: dict):
+        text = f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+        try:
+            await response.write(text.encode('utf-8'))
+        except (ConnectionResetError, ConnectionAbortedError, RuntimeError):
+            pass
+
+    current_task = asyncio.current_task()
+
+    is_stop = any(kw in user_message for kw in _STOP_KEYWORDS)
+    if is_stop:
+        old_task = _active_runs.pop(session_id, None)
+        if old_task and not old_task.done():
+            logger.info("🛑 用户取消会话 %s 的进行中任务", session_id)
+            old_task.cancel()
+        await _send("done", {"status": "stopped"})
+        return response
+
+    _active_runs[session_id] = current_task
+
+    try:
+        from langchain_core.messages import HumanMessage
+
+        if _agent is None:
+            await _send("info", {"status": "initializing", "message": "首次使用正在初始化 Agent，约需 20-40 秒，请耐心等待..."})
+
+        agent = await get_agent()
+
+        if _agent_init_time_since_init[0] is not None:
+            init_time = _agent_init_time_since_init[0]
+            _agent_init_time_since_init[0] = None
+            await _send("info", {"status": "initialized", "message": f"Agent 初始化完成 (用时 {init_time:.1f}秒)"})
+
+        await _send("info", {"status": "started", "session_id": session_id})
+
+        config = {"configurable": {"thread_id": session_id, "recursion_limit": 50}}
+
+        current_tool = None
+        tool_output_lines = []
+        tool_called = False
+        tool_actions = []
+        last_user_msg = user_message
+        last_ai_msg = ""
+        drain_task = None
+        _disconnected = False
+
+        from tools import set_diag_progress_callback
+        progress_list = []
+        def _on_diag_progress(name, status, detail):
+            progress_list.append({"name": name, "status": status, "detail": detail})
+        set_diag_progress_callback(_on_diag_progress)
+
+        async def _drain_progress_loop():
+            last_len = 0
+            try:
+                while True:
+                    if len(progress_list) > last_len:
+                        for item in progress_list[last_len:]:
+                            await _send("diag_progress", item)
+                        last_len = len(progress_list)
+                    await asyncio.sleep(0.2)
+            except asyncio.CancelledError:
+                pass
+
+        _stream_t0 = time.time()
+
         state = await agent.aget_state(config)
         history = (state.values.get("messages", []) if state and state.values else [])
         if _count_msg_chars(history) > _MAX_MSG_CHARS:
