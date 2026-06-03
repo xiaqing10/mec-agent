@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""验证 MongoDB flowStat 数据结构和重复情况"""
+"""验证 MongoDB flowStat 数据：排除双向记录 vs 不排除"""
 import json
 from datetime import datetime
 from pymongo import MongoClient
@@ -11,104 +11,45 @@ ROAD_NAME = "K7+197"
 
 
 def query_flow(start, end):
-    """查询指定时间段的 flowStat 数据"""
     client = MongoClient(MONGO_HOST, MONGO_PORT, serverSelectionTimeoutMS=15000, connectTimeoutMS=15000)
     db = client[MONGO_DB]
-
     match = {"RoadName": ROAD_NAME, "EndTime": {"$gte": start, "$lte": end}}
 
-    # 1) 原始记录数
     raw_count = db["flowStat"].count_documents(match)
 
-    # 2) 按 (EndTime, Direction, LaneNum) 分组检查重复
-    dup_pipeline = [
-        {"$match": match},
-        {"$group": {
-            "_id": {"EndTime": "$EndTime", "Direction": "$Direction", "LaneNum": "$LaneNum"},
-            "count": {"$sum": 1},
-            "totalSum": {"$sum": "$TotalCount"},
-        }},
-        {"$sort": {"_id.EndTime": 1, "_id.Direction": 1, "_id.LaneNum": 1}},
-    ]
-    dup_results = list(db["flowStat"].aggregate(dup_pipeline))
+    def agg(direction_filter=None):
+        pipe = [{"$match": match}, {"$match": {"TotalCount": {"$gt": 0}}}]
+        if direction_filter:
+            pipe.append({"$match": direction_filter})
+        pipe += [
+            {"$group": {"_id": "$Direction", "total": {"$sum": "$TotalCount"}, "rec": {"$sum": 1}}},
+            {"$sort": {"total": -1}},
+        ]
+        return list(db["flowStat"].aggregate(pipe))
 
-    # 3) 按方向汇总 - 不排除双向（对比用）
-    agg_all = [
-        {"$match": match},
-        {"$match": {"TotalCount": {"$gt": 0}}},
-        {"$group": {
-            "_id": {"Direction": "$Direction"},
-            "totalVehicles": {"$sum": "$TotalCount"},
-            "records": {"$sum": 1},
-        }},
-        {"$sort": {"totalVehicles": -1}},
-    ]
-    dir_all = list(db["flowStat"].aggregate(agg_all))
-
-    # 4) 按方向汇总 - 排除双向（正确方式）
-    agg_no_double = [
-        {"$match": match},
-        {"$match": {"TotalCount": {"$gt": 0}}},
-        {"$match": {"Direction": {"$ne": "双向"}}},
-        {"$group": {
-            "_id": {"Direction": "$Direction"},
-            "totalVehicles": {"$sum": "$TotalCount"},
-            "records": {"$sum": 1},
-        }},
-        {"$sort": {"totalVehicles": -1}},
-    ]
-    dir_no_double = list(db["flowStat"].aggregate(agg_no_double))
-
-    # 5) 抽样原始记录
-    sample_pipeline = [
-        {"$match": match},
-        {"$sort": {"EndTime": 1, "Direction": 1, "LaneNum": 1}},
-        {"$limit": 20},
-        {"$project": {"_id": 0, "EndTime": 1, "Direction": 1, "LaneNum": 1, "TotalCount": 1}},
-    ]
-    samples = list(db["flowStat"].aggregate(sample_pipeline))
+    all_dirs = agg()
+    no_double = agg({"Direction": {"$ne": "双向"}})
 
     client.close()
-
-    # 计算对比
-    total_with_double = sum(d["totalVehicles"] for d in dir_all)
-    total_no_double = sum(d["totalVehicles"] for d in dir_no_double)
-
     return {
-        "road": ROAD_NAME,
-        "time_range": [start.isoformat(), end.isoformat()],
+        "time": f"{start.strftime('%H:%M')}~{end.strftime('%H:%M')}",
         "raw_count": raw_count,
-        "dup_check": [{"group": d["_id"], "count": d["count"], "totalSum": d["totalSum"]} for d in dup_results],
-        "summary_with_double": [{"direction": d["_id"]["Direction"], "total": d["totalVehicles"], "records": d["records"]} for d in dir_all],
-        "summary_no_double": [{"direction": d["_id"]["Direction"], "total": d["totalVehicles"], "records": d["records"]} for d in dir_no_double],
-        "total_with_double": total_with_double,
-        "total_no_double": total_no_double,
-        "samples": samples,
+        "包含双向": {d["_id"]: d["total"] for d in all_dirs},
+        "排除双向": {d["_id"]: d["total"] for d in no_double},
+        "total_with": sum(d["total"] for d in all_dirs),
+        "total_without": sum(d["total"] for d in no_double),
     }
 
 
 def main():
-    results = {}
+    r1 = query_flow(datetime(2026, 6, 2, 0, 0, 0), datetime(2026, 6, 2, 0, 5, 0))
+    r2 = query_flow(datetime(2026, 6, 2, 0, 0, 0), datetime(2026, 6, 2, 1, 0, 0))
 
-    print("查询 2026-06-02 00:00:00 ~ 00:05:00 ...")
-    t1 = datetime(2026, 6, 2, 0, 0, 0)
-    t2 = datetime(2026, 6, 2, 0, 5, 0)
-    results["5min"] = query_flow(t1, t2)
-
-    print("查询 2026-06-02 00:00:00 ~ 01:00:00 ...")
-    t3 = datetime(2026, 6, 2, 0, 0, 0)
-    t4 = datetime(2026, 6, 2, 1, 0, 0)
-    results["1hour"] = query_flow(t3, t4)
-
-    def convert(obj):
-        if isinstance(obj, datetime):
-            return obj.isoformat()
-        if hasattr(obj, '__class__') and obj.__class__.__name__ == 'ObjectId':
-            return str(obj)
-        return str(obj)
-
-    print("\n" + "=" * 60)
-    print(json.dumps(results, ensure_ascii=False, indent=2, default=convert))
+    print(f"K7+197 流量对比\n{'='*50}")
+    for label, r in [("5分钟", r1), ("1小时", r2)]:
+        print(f"\n【{label} {r['time']}】 原始记录={r['raw_count']}")
+        print(f"  包含双向: {r['包含双向']}  → 合计={r['total_with']}")
+        print(f"  排除双向: {r['排除双向']}  → 合计={r['total_without']}")
 
 
 if __name__ == "__main__":
