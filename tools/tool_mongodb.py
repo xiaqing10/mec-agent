@@ -17,7 +17,8 @@ _EVENT_TYPE_MAP = {
     14: "抛撒物", 15: "货车走主干道", 16: "非机动车闯禁",
     17: "非法穿越导流线区域", 18: "导流线区域停车", 19: "未保持安全车距",
     20: "机动车驶离", 21: "轻度拥堵", 22: "中度拥堵", 23: "重度拥堵",
-    24: "急加速", 25: "急减速", 26: "急转弯", 31: "施工",
+    24: "急加速", 25: "急减速", 26: "急转弯", 27: "未定义事件",
+    31: "施工",
 }
 _EVENT_NAME_TO_ID = {v: k for k, v in _EVENT_TYPE_MAP.items()}
 
@@ -409,6 +410,10 @@ show_image: 是否显示事件图片（默认 False，传 "True" 即可显示图
     time_filter = _parse_time_filter(start_time, end_time)
     if time_filter:
         match.update(time_filter)
+    else:
+        # 默认查询今天的数据
+        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        match["creatTime"] = {"$gte": today}
 
     try:
         cursor = (
