@@ -3,8 +3,31 @@ import urllib.request
 from datetime import datetime, timedelta
 from typing import Optional
 
-from config import MONGO_HOST, MONGO_PORT, MONGO_DB
+from config import MONGO_HOST, MONGO_PORT, MONGO_DB, MYSQL_HOST, MYSQL_USER, MYSQL_PASS, MYSQL_DB
 from langchain_core.tools import tool
+
+
+# ---------------------------------------------------------------------------
+# 内部辅助：从 MySQL 查询项目对应的设备编号列表
+# ---------------------------------------------------------------------------
+def _get_project_devs(project: str) -> list:
+    """从 MySQL 查询项目对应的 MongoDB 设备编号列表。
+
+    MySQL 中设备名格式: mk10_310 -> MongoDB 中: k10_310
+    """
+    import pymysql
+    try:
+        conn = pymysql.connect(host=MYSQL_HOST, user=MYSQL_USER, password=MYSQL_PASS,
+                               database=MYSQL_DB, charset="utf8mb4", connect_timeout=5,
+                               cursorclass=pymysql.cursors.DictCursor, read_timeout=5)
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT name FROM mec_device WHERE project LIKE %s", (f"%{project}%",))
+            rows = cursor.fetchall()
+        conn.close()
+        # mk10_310 -> k10_310
+        return [r["name"].lstrip("m") for r in rows if r.get("name")]
+    except Exception:
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -400,9 +423,10 @@ def query_server_traffic_flow(
 @tool
 def query_server_events(
     dev_no: str = "",
+    project: str = "",
     start_time: str = "",
     end_time: str = "",
-event_type: str = "-1",
+    event_type: str = "-1",
     limit: int = 50,
     detail: bool = False,
     show_image: str = "false",
@@ -418,7 +442,8 @@ event_type: str = "-1",
         21=轻度拥堵 22=中度拥堵 23=重度拥堵 24=急加速 25=急减速 26=急转弯 31=施工
 
     Args:
-        dev_no: 设备编号或桩号（支持模糊匹配），如 "k11_292"、"k11"、"K11+292"（可选）
+        dev_no: 设备编号或桩号（支持模糊匹配），如 "k11_292"、"k11"、"K11+292"（可选，与 project 二选一）
+        project: 项目名（可选，与 dev_no 二选一），如 "仙新路"、"南京仙新路"、"德会"（模糊匹配）
         start_time: 开始时间，格式 "2026-05-01 00:00:00" 或 "2026-05-01"
         end_time: 结束时间，格式同上
         event_type: 事件类型编号（可选，-1 表示全部），也支持中文名称如"非机动车闯禁"，默认 "-1"
@@ -428,7 +453,14 @@ event_type: str = "-1",
     """
     db = _get_mongo()
     match = {"eventDissipate": 0, "eventIgnore": 0}
-    if dev_no:
+
+    # 项目查询：从 MySQL 查出设备列表，用 $in 匹配
+    if project and not dev_no:
+        devs = _get_project_devs(project)
+        if not devs:
+            return f"⚠️ 项目 '{project}' 未找到对应设备，请检查项目名。"
+        match["devNo"] = {"$in": devs}
+    elif dev_no:
         dev_pattern = dev_no.replace("+", r"[_\+]").replace(" ", "")
         match["$or"] = [
             {"devNo": {"$regex": dev_pattern, "$options": "i"}},
@@ -436,6 +468,7 @@ event_type: str = "-1",
             {"PileNumber2": {"$regex": dev_pattern, "$options": "i"}},
             {"eventMileage": {"$regex": dev_pattern, "$options": "i"}},
         ]
+
     et = _resolve_event_type(event_type)
     if et >= 0:
         match["event"] = et
@@ -463,6 +496,8 @@ event_type: str = "-1",
         return "⚠️ 未查询到匹配的事件记录。"
 
     lines = [f"📋 **事件记录（共{len(events)}条）**\n"]
+    if project:
+        lines.append(f"项目: {project}")
     if dev_no:
         lines.append(f"设备: {dev_no}")
     if et >= 0:
@@ -520,6 +555,7 @@ def query_server_event_stats(
     start_time: str = "",
     end_time: str = "",
     dev_no: str = "",
+    project: str = "",
 ) -> str:
     """按事件类型统计事件数量分布（仅已确认事件，eventDissipate=0, eventIgnore=0）。
 
@@ -528,11 +564,18 @@ def query_server_event_stats(
     Args:
         start_time: 开始时间，格式 "2026-05-01 00:00:00" 或 "2026-05-01"
         end_time: 结束时间，格式同上
-        dev_no: 设备编号或桩号（支持模糊匹配，可选，不传则统计全部设备）
+        dev_no: 设备编号或桩号（支持模糊匹配，可选，与 project 二选一）
+        project: 项目名（可选，与 dev_no 二选一），如 "仙新路"、"德会"
     """
     db = _get_mongo()
     match = {"eventDissipate": 0, "eventIgnore": 0}
-    if dev_no:
+
+    if project and not dev_no:
+        devs = _get_project_devs(project)
+        if not devs:
+            return f"⚠️ 项目 '{project}' 未找到对应设备，请检查项目名。"
+        match["devNo"] = {"$in": devs}
+    elif dev_no:
         dev_pattern = dev_no.replace("+", r"[_\+]").replace(" ", "")
         match["$or"] = [
             {"devNo": {"$regex": dev_pattern, "$options": "i"}},
@@ -540,6 +583,7 @@ def query_server_event_stats(
             {"PileNumber2": {"$regex": dev_pattern, "$options": "i"}},
             {"eventMileage": {"$regex": dev_pattern, "$options": "i"}},
         ]
+
     time_filter = _parse_ts_filter(start_time, end_time)
     if time_filter:
         match.update(time_filter)
@@ -563,6 +607,8 @@ def query_server_event_stats(
 
     total = sum(r["count"] for r in results)
     lines = [f"📊 **事件统计（共{total}条）**\n"]
+    if project:
+        lines.append(f"项目: {project}")
     if dev_no:
         lines.append(f"设备: {dev_no}")
     if start_time or end_time:
