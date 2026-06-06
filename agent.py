@@ -208,7 +208,7 @@ def agent_node(state: AgentState) -> dict:
 
 ### 交通数据分析（MongoDB数据，仅当用户明确提到"服务器"相关时使用，如"服务器流量""服务器事件""服务器雷达"等；用户不提"服务器"则默认查MEC设备数据）
 - **query_server_traffic_flow(road_name, start_time, end_time, direction)**: 断面流量查询（车流量/平均速度/时间占有率/道路状态）
-- **query_server_events(dev_no, start_time, end_time, event_type, limit, show_image)**: 雷达事件记录查询（事件类型/时间/设备/经纬度/图片，show_image="True"可显示图片）
+- **query_server_events(dev_no, start_time, end_time, event_type, limit, show_image)**: 雷达事件记录查询（event集合，eventDissipate=0，事件类型/时间/设备/经纬度/图片，show_image="True"可显示图片）
 - **query_server_event_stats(start_time, end_time, dev_no)**: 事件类型分布统计
 - **query_server_device_metrics(dev_name, start_time, end_time)**: 设备运行健康指标（CPU/内存/磁盘/温度/告警）
 - **query_server_traffic_pattern(start_time, end_time, road_name)**: 交通流时间序列分析（趋势/高峰/拥堵）
@@ -271,6 +271,11 @@ def agent_node(state: AgentState) -> dict:
                 system_prompt += "\n\n## 关于当前用户\n" + "\n\n".join(mem_parts)
 
     # Insert system prompt as first message if not already there
+    # 主动裁剪：保留最近 N 条消息，防止 token 溢出或内容安全过滤
+    MAX_HISTORY = 20
+    if len(messages) > MAX_HISTORY:
+        logger.info("消息数=%d 超过上限%d，裁剪到最后%d条", len(messages), MAX_HISTORY, MAX_HISTORY)
+        messages = messages[-MAX_HISTORY:]
     all_messages = [("system", system_prompt)] + messages
 
     _t0 = time.time()
@@ -298,13 +303,14 @@ def agent_node(state: AgentState) -> dict:
                      _t1 - _t0, error_type, status_code, api_code,
                      error_str[:300], tb_str)
 
-        # 重试条件：超时/限流/400参数错误
+        # 重试条件：超时/限流/400参数错误/内容安全
         error_lower = error_str.lower()
         should_retry = (
             "400" in error_str or "invalidparameter" in error_lower
             or "timeout" in error_lower or "timed out" in error_lower
             or status_code == 429 or "quota" in error_lower
             or status_code == 502 or status_code == 503
+            or "sensitive" in error_lower
         )
         if should_retry:
             logger.info("Retrying LLM invoke with minimal messages...")

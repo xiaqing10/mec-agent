@@ -23,7 +23,8 @@ _EVENT_TYPE_MAP = {
 _EVENT_NAME_TO_ID = {v: k for k, v in _EVENT_TYPE_MAP.items()}
 
 _VEHICLE_TYPE_MAP = {
-    0: "未知", 1: "客车", 2: "公交车", 3: "货车", 4: "非机动车", 5: "行人",
+    0: "未定义", 1: "密集人群", 2: "人", 3: "小车", 4: "厢车",
+    5: "巴士", 6: "卡车", 7: "摩托", 8: "自行车", 9: "遮阳三轮车", 10: "三轮车",
 }
 
 
@@ -57,7 +58,7 @@ def _get_mongo():
 def _fmt_event(e, detail=False):
     t = _EVENT_TYPE_MAP.get(e.get("event"), f"未知({e.get('event')})")
     vt = _VEHICLE_TYPE_MAP.get(e.get("vehicleType"), f"未知({e.get('vehicleType')})")
-    ts = e.get("creatTime", e.get("timestamp", ""))
+    ts = e.get("timestamp", "")
     if isinstance(ts, (int, float)):
         ts = datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d %H:%M:%S")
     elif hasattr(ts, "strftime"):
@@ -104,6 +105,32 @@ def _parse_time_filter(start_time, end_time, field="creatTime"):
             except ValueError:
                 pass
     return {field: query} if query else {}
+
+
+def _parse_ts_filter(start_time, end_time):
+    """将用户时间字符串转为 timestamp（毫秒）的 MongoDB 查询条件。"""
+    query = {}
+    if start_time:
+        try:
+            dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            try:
+                dt = datetime.strptime(start_time, "%Y-%m-%d")
+            except ValueError:
+                dt = None
+        if dt:
+            query["$gte"] = int(dt.timestamp() * 1000)
+    if end_time:
+        try:
+            dt = datetime.strptime(end_time, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            try:
+                dt = datetime.strptime(end_time, "%Y-%m-%d") + timedelta(days=1)
+            except ValueError:
+                dt = None
+        if dt:
+            query["$lte"] = int(dt.timestamp() * 1000)
+    return {"timestamp": query} if query else {}
 
 
 def _build_timestamp_regex(start_time: str, end_time: str) -> dict:
@@ -380,9 +407,9 @@ event_type: str = "-1",
     detail: bool = False,
     show_image: str = "false",
 ) -> str:
-    """查询雷达事件记录。
+    """查询雷达事件记录（仅已确认事件，eventDissipate=0, eventIgnore=0）。
 
-    数据来源：MongoDB radarData.event 集合。
+    数据来源：MongoDB radarData.event 集合（自动过滤 eventDissipate=0, eventIgnore=0）。
     事件类型:
         -1=全部 0=无事件 1=逆行 2=大车超高速 3=小车超高速 4=大车超低速 5=小车超低速
         6=停车 7=占用应急车道行驶 8=压线 9=变道 11=占用应急车道逆行
@@ -391,35 +418,41 @@ event_type: str = "-1",
         21=轻度拥堵 22=中度拥堵 23=重度拥堵 24=急加速 25=急减速 26=急转弯 31=施工
 
     Args:
-        dev_no: 设备编号，如 "k9_820"、"k5_812"（可选）
+        dev_no: 设备编号或桩号（支持模糊匹配），如 "k11_292"、"k11"、"K11+292"（可选）
         start_time: 开始时间，格式 "2026-05-01 00:00:00" 或 "2026-05-01"
         end_time: 结束时间，格式同上
         event_type: 事件类型编号（可选，-1 表示全部），也支持中文名称如"非机动车闯禁"，默认 "-1"
         limit: 最大返回条数（默认 50，最多 200）
         detail: 是否返回详细位置和媒体信息（默认 False）
-show_image: 是否显示事件图片（默认 False，传 "True" 即可显示图片，通过 HTTP 读取 ftpImg）
+        show_image: 是否显示事件图片（默认 False，传 "True" 即可显示图片，通过 HTTP 读取 ftpImg）
     """
     db = _get_mongo()
-    match = {}
+    match = {"eventDissipate": 0, "eventIgnore": 0}
     if dev_no:
-        match["devNo"] = dev_no
+        dev_pattern = dev_no.replace("+", r"[_\+]").replace(" ", "")
+        match["$or"] = [
+            {"devNo": {"$regex": dev_pattern, "$options": "i"}},
+            {"PileNumber1": {"$regex": dev_pattern, "$options": "i"}},
+            {"PileNumber2": {"$regex": dev_pattern, "$options": "i"}},
+            {"eventMileage": {"$regex": dev_pattern, "$options": "i"}},
+        ]
     et = _resolve_event_type(event_type)
     if et >= 0:
         match["event"] = et
     show_image_bool = _to_bool(show_image)
-    time_filter = _parse_time_filter(start_time, end_time)
+    time_filter = _parse_ts_filter(start_time, end_time)
     if time_filter:
         match.update(time_filter)
     else:
-        # 默认查询今天的数据
+        # 默认查询今天的数据（用本地时间转毫秒时间戳）
         today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        match["creatTime"] = {"$gte": today}
+        match["timestamp"] = {"$gte": int(today.timestamp() * 1000)}
 
     try:
         cursor = (
             db["event"]
             .find(match, {"_id": 0})
-            .sort("creatTime", -1)
+            .sort("timestamp", -1)
             .limit(min(limit, 200))
         )
         events = list(cursor)
@@ -442,6 +475,8 @@ show_image: 是否显示事件图片（默认 False，传 "True" 即可显示图
         lines.append(_fmt_event(e, detail=detail))
 
     if show_image_bool:
+        img_ok = 0
+        img_fail = []
         for e in events:
             ftp_img = e.get("ftpImg", "")
             ftp_dir = e.get("ftpDir", "")
@@ -451,16 +486,18 @@ show_image: 是否显示事件图片（默认 False，传 "True" 即可显示图
                 from config import EVENT_IMAGE_BASE_URL
                 url = f"{EVENT_IMAGE_BASE_URL}/{dev_part}/{ftp_dir}/{ftp_img}"
                 try:
-                    req = urllib.request.Request(url)
-                    resp = urllib.request.urlopen(req, timeout=5)
-                    img_bytes = resp.read()
-                    import base64
-                    b64 = base64.b64encode(img_bytes).decode()
-                    evt_type = _EVENT_TYPE_MAP.get(e.get("event"), f"事件{e.get('event')}")
-                    img_tag = f"\n![{evt_type}](data:image/jpeg;base64,{b64})"
-                    lines.append(img_tag)
+                    req = urllib.request.Request(url, method="HEAD")
+                    resp = urllib.request.urlopen(req, timeout=3)
+                    if resp.status == 200:
+                        evt_type = _EVENT_TYPE_MAP.get(e.get("event"), f"事件{e.get('event')}")
+                        lines.append(f"\n![{evt_type}]({url})")
+                        img_ok += 1
+                    else:
+                        img_fail.append(ftp_img)
                 except Exception:
-                    pass
+                    img_fail.append(ftp_img)
+        if img_fail:
+            lines.append(f"\n⚠️ {len(img_fail)}张图片加载失败: {', '.join(img_fail[:5])}{'...' if len(img_fail) > 5 else ''}")
 
     # 按事件类型汇总
     type_counts = {}
@@ -484,22 +521,32 @@ def query_server_event_stats(
     end_time: str = "",
     dev_no: str = "",
 ) -> str:
-    """按事件类型统计事件数量分布。
+    """按事件类型统计事件数量分布（仅已确认事件，eventDissipate=0, eventIgnore=0）。
 
     可用于：了解一段时间内各类交通事件（违章/事故/异常）的发生频率。
 
     Args:
         start_time: 开始时间，格式 "2026-05-01 00:00:00" 或 "2026-05-01"
         end_time: 结束时间，格式同上
-        dev_no: 设备编号（可选，不传则统计全部设备）
+        dev_no: 设备编号或桩号（支持模糊匹配，可选，不传则统计全部设备）
     """
     db = _get_mongo()
-    match = {}
+    match = {"eventDissipate": 0, "eventIgnore": 0}
     if dev_no:
-        match["devNo"] = dev_no
-    time_filter = _parse_time_filter(start_time, end_time)
+        dev_pattern = dev_no.replace("+", r"[_\+]").replace(" ", "")
+        match["$or"] = [
+            {"devNo": {"$regex": dev_pattern, "$options": "i"}},
+            {"PileNumber1": {"$regex": dev_pattern, "$options": "i"}},
+            {"PileNumber2": {"$regex": dev_pattern, "$options": "i"}},
+            {"eventMileage": {"$regex": dev_pattern, "$options": "i"}},
+        ]
+    time_filter = _parse_ts_filter(start_time, end_time)
     if time_filter:
         match.update(time_filter)
+    else:
+        # 默认查询今天
+        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        match["timestamp"] = {"$gte": int(today.timestamp() * 1000)}
 
     try:
         pipeline = [
@@ -557,7 +604,7 @@ def query_server_device_metrics(
     各状态告警标志（摄像头/雷达/融合/事件/流量/SSD/诊断等）。
 
     Args:
-        dev_name: 设备名，如 "k5_812"（可选，不传则查所有设备最新记录）
+        dev_name: 设备名（支持模糊匹配），如 "k5_812"、"k11"（可选，不传则查所有设备最新记录）
         start_time: 开始时间
         end_time: 结束时间
         limit: 最大返回条数（默认 20，最多 100）
@@ -565,7 +612,7 @@ def query_server_device_metrics(
     db = _get_mongo()
     match = {}
     if dev_name:
-        match["devName"] = dev_name
+        match["devName"] = {"$regex": dev_name, "$options": "i"}
     time_filter = _parse_time_filter(start_time, end_time)
     if time_filter:
         match.update(time_filter)
@@ -723,10 +770,13 @@ def query_server_traffic_pattern(
                 # 时段分析
                 hkey = (rn, hour)
                 if hkey not in hourly:
-                    hourly[hkey] = {"roadName": rn, "hour": hour, "totalVehicles": 0, "weightedVel": 0}
+                    hourly[hkey] = {"roadName": rn, "hour": hour, "totalVehicles": 0, "weightedVel": 0, "timeOccSum": 0, "spaceOccSum": 0, "records": 0}
                 h = hourly[hkey]
                 h["totalVehicles"] += tc
                 h["weightedVel"] += s.get("AvgVelocity", 0) * tc
+                h["timeOccSum"] += s.get("TimeOccupancy", 0)
+                h["spaceOccSum"] += s.get("SpaceOccupancy", 0)
+                h["records"] += 1
 
         results = sorted(agg.values(), key=lambda x: -x["totalVehicles"])
         hourly_results = sorted(hourly.values(), key=lambda x: (x["roadName"], x["hour"]))
@@ -764,13 +814,17 @@ def query_server_traffic_pattern(
     # 时段分析
     lines.append("\n**时段流量趋势（按小时）:**\n")
     if hourly_results:
-        lines.append("| 时段 | 路段 | 车流量 | 均速(km/h) |")
-        lines.append("|------|------|--------|------------|")
+        lines.append("| 时段 | 路段 | 车流量 | 均速(km/h) | 时间占有率 | 空间占有率 |")
+        lines.append("|------|------|--------|------------|------------|------------|")
         for h in hourly_results:
             avg_vel = h["weightedVel"] / max(h["totalVehicles"], 1)
+            recs = max(h["records"], 1)
+            avg_tm = h["timeOccSum"] / recs
+            avg_sp = h["spaceOccSum"] / recs
             lines.append(
                 f"| {h['hour']:02d}:00-{h['hour']+1:02d}:00 | "
-                f"{h['roadName']} | {h['totalVehicles']} | {avg_vel:.1f} |"
+                f"{h['roadName']} | {h['totalVehicles']} | {avg_vel:.1f} | "
+                f"{avg_tm*100:.1f}% | {avg_sp*100:.1f}% |"
             )
 
     # 拥堵分析
@@ -851,10 +905,10 @@ def query_server_analysis_report(
         ]
         hourly_data = list(db["flowStat"].aggregate(hourly_pipeline, allowDiskUse=True))
 
-        # 事件统计数据
-        event_time_filter = _parse_time_filter(start_time, end_time, field="creatTime") or {}
+        # 事件统计数据（仅已确认事件 eventDissipate=0, eventIgnore=0，用 timestamp 过滤）
+        event_time_filter = _parse_ts_filter(start_time, end_time) or {}
         event_pipeline = [
-            {"$match": {**event_time_filter, "event": {"$ne": 0}}},
+            {"$match": {**event_time_filter, "event": {"$ne": 0}, "eventDissipate": 0, "eventIgnore": 0}},
             {"$group": {"_id": "$event", "count": {"$sum": 1}}},
             {"$sort": {"count": -1}},
             {"$limit": 10},
