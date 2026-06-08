@@ -1,17 +1,24 @@
 """Shared state and helpers for tool modules."""
 
-_diag_progress_callback = None
+import contextvars
+
+# 使用 ContextVar 实现 per-request 的回调，避免多用户并发时互相覆盖
+_diag_progress_callback: contextvars.ContextVar = contextvars.ContextVar(
+    "_diag_progress_callback", default=None
+)
 
 
 def set_diag_progress_callback(cb):
-    global _diag_progress_callback
-    _diag_progress_callback = cb
+    _diag_progress_callback.set(cb)
 
 
 def _notify_progress(name, status, detail):
-    cb = _diag_progress_callback
+    cb = _diag_progress_callback.get()
     if cb:
-        cb(name, status, detail)
+        try:
+            cb(name, status, detail)
+        except Exception:
+            pass  # 回调异常不应影响诊断流程
 
 
 def _summarize_log_errors(log_errors: dict) -> str:
