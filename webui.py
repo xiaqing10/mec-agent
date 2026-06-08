@@ -315,7 +315,7 @@ body {
 <body>
 <div class="header">
   <div class="header-badge">智慧交通垂域智能体</div>
-  <span class="subtitle">v3.2debug · LangGraph</span>
+  <span class="subtitle">v3.4 · LangGraph</span>
   <div class="header-right">
     <span class="user-info" id="userInfo"></span>
     <select id="modelSelect" onchange="onModelChange()" style="font-size:12px;padding:4px 8px;border-radius:4px;border:1px solid var(--border-color);background:var(--bg-surface);color:var(--text-primary);cursor:pointer;"></select>

@@ -7,7 +7,19 @@ import os
 import logging
 from pathlib import Path
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+# 配置 logging：INFO 及以下输出到 stdout，WARNING 及以上输出到 stderr
+handler_out = logging.StreamHandler(sys.stdout)
+handler_out.setLevel(logging.DEBUG)
+handler_out.addFilter(lambda record: record.levelno <= logging.INFO)
+
+handler_err = logging.StreamHandler(sys.stderr)
+handler_err.setLevel(logging.WARNING)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s %(message)s',
+    handlers=[handler_out, handler_err],
+)
 logging.getLogger('aiohttp.access').setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
@@ -52,7 +64,7 @@ async def handle_health(request):
 
 async def handle_version(request):
     return web.json_response({
-        "version": "3.3debug",
+        "version": "3.4",
         "service": "智慧交通垂域智能体",
         "features": ["日志分析", "设备诊断", "钉钉推送", "流式输出", "Markdown渲染", "LangGraph持久记忆"]
     })
