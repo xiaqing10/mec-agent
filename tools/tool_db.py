@@ -194,7 +194,7 @@ def query_mec_project_from_db(project: str) -> str:
     pm_healthy = sum(1 for d in devices if d.get("pm_healthy"))
     container_ssh_online = sum(1 for d in devices if d.get("ssh_status"))
     zero_img = sum(1 for d in devices if d.get("event_jpg_count") is not None and d["event_jpg_count"] == 0)
-    low_img = sum(1 for d in devices if d.get("event_jpg_count") is not None and d["event_jpg_count"] is not None and d["event_jpg_count"] < 100)
+    low_img = sum(1 for d in devices if d.get("event_jpg_count") is not None and d["event_jpg_count"] < 100)
 
     abnormal_devices = []
     for d in devices:
