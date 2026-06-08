@@ -8,11 +8,14 @@ import sys
 import os
 import time
 import re
+import logging
 import subprocess
 from datetime import datetime
 import urllib.request
 import urllib.error
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from config import FEISHU_APP_SECRET
 
@@ -39,7 +42,8 @@ def get_feishu_token():
         req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
         resp = urllib.request.urlopen(req, timeout=10)
         return json.loads(resp.read())['tenant_access_token']
-    except:
+    except Exception as e:
+        logger.warning("获取飞书token失败: %s", e)
         return None
 
 def fetch_latest_mec_message():
@@ -83,7 +87,8 @@ def load_last_check():
     try:
         with open(SELF_AGENT_DIR / 'last_check.json', 'r') as f:
             return json.load(f)
-    except:
+    except Exception as e:
+        logger.debug("加载上次检查记录失败，使用默认值: %s", e)
         return {"last_timestamp": ""}
 
 def save_last_check(timestamp):

@@ -14,8 +14,11 @@
 import pymysql
 import pymysql.cursors
 import re
+import logging
 
 from config import MYSQL_HOST, MYSQL_USER, MYSQL_PASS, MYSQL_DB
+
+logger = logging.getLogger(__name__)
 
 
 def _get_conn():
@@ -133,8 +136,8 @@ def lookup_device(query: str, project: str = None) -> list:
                         "pole": r["pole"] or "",
                         "host": r["host"],
                     })
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("数据库查询失败 (query=%s): %s", query, e)
     finally:
         conn.close()
 
@@ -426,8 +429,8 @@ def get_device_db_info(device_ip: str) -> dict:
                     "updated_at": str(img["updated_at"]) if img["updated_at"] else "",
                 })
 
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("获取设备数据库信息失败 (ip=%s): %s", device_ip, e)
     finally:
         conn.close()
 
