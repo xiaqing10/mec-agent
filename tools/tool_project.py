@@ -80,11 +80,11 @@ def feishu_llm_analyze_logs(project: str = "") -> str:
     from code_analyze import parse_mec_report
     import urllib.request
     import urllib.error
-    from config import AVAILABLE_MODELS
-    _default_cfg = next(iter(AVAILABLE_MODELS.values()))
-    LLM_API_KEY = _default_cfg["api_key"]
-    LLM_BASE_URL = _default_cfg["base_url"]
-    LLM_MODEL = next(iter(AVAILABLE_MODELS))
+    from agent import get_current_model_config
+    cfg = get_current_model_config()
+    LLM_API_KEY = cfg["api_key"]
+    LLM_BASE_URL = cfg["base_url"]
+    LLM_MODEL = cfg["model"]
 
     report_text, error = mec_analyze.fetch_latest_mec_message()
     if error or not report_text:

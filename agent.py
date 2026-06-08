@@ -97,6 +97,22 @@ def switch_model(model_id: str) -> bool:
     return True
 
 
+def get_current_model_config() -> dict:
+    """获取当前会话的模型配置（model_id, api_key, base_url）。
+
+    供其他模块（tool_mongodb, tool_evolve, tool_project, tool_device）调用，
+    避免硬编码模型名。
+    """
+    model_id = _current_model_id.get()
+    api_key = _current_api_key.get()
+    base_url = _current_base_url.get()
+    return {
+        "model": model_id,
+        "api_key": api_key,
+        "base_url": base_url,
+    }
+
+
 # ──────────────────────────────────────────────
 # State definition
 # ──────────────────────────────────────────────

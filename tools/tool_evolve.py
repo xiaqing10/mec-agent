@@ -210,16 +210,17 @@ def generate_improvement_report(days: int = 3) -> str:
 
 
 def _llm_analysis(prompt: str, system: str = "") -> str:
-    from config import AVAILABLE_MODELS
-    cfg = AVAILABLE_MODELS.get("deepseek-v4-flash", {})
-    url = f"{cfg.get('base_url', 'https://ark.cn-beijing.volces.com/api/coding/v3')}/chat/completions"
-    api_key = cfg.get("api_key", "")
+    """内部调用 LLM 对聚合数据进行二次分析。使用用户当前选择的模型。"""
+    from agent import get_current_model_config
+    cfg = get_current_model_config()
+    url = f"{cfg['base_url']}/chat/completions"
+    api_key = cfg["api_key"]
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
     payload = {
-        "model": "deepseek-v4-flash",
+        "model": cfg["model"],
         "messages": messages,
         "temperature": 0.3,
         "max_tokens": 4096,
