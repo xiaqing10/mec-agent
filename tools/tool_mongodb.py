@@ -191,9 +191,17 @@ def _build_timestamp_regex(start_time: str, end_time: str) -> dict:
                 min_end = end_dt.minute
                 if min_start == 0 and min_end == 59:
                     return {"$regex": f"^{date_str} {hour:02d}:"}
-                # 生成分钟字符类
-                minute_str = "".join(str(i) for i in range(min_start, min_end + 1))
-                return {"$regex": f"^{date_str} {hour:02d}:0[{minute_str}]"}
+                # 生成分钟匹配
+                if min_start >= 10 and min_end < 60:
+                    # 两位数分钟：如 [10-14]
+                    return {"$regex": f"^{date_str} {hour:02d}:[{min_start:02d}-{min_end:02d}]"}
+                elif min_start < 10 and min_end < 10:
+                    # 一位数分钟：如 0[0-4]
+                    minute_str = "".join(str(i) for i in range(min_start, min_end + 1))
+                    return {"$regex": f"^{date_str} {hour:02d}:0[{minute_str}]"}
+                else:
+                    # 跨十位：如 [5-14]，简化为匹配整个小时
+                    return {"$regex": f"^{date_str} {hour:02d}:"}
             else:
                 date_str = start_dt.strftime("%Y-%m-%d")
                 hours = list(range(start_dt.hour, end_dt.hour + 1))
