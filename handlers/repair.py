@@ -3,20 +3,9 @@ import logging
 from aiohttp import web
 
 from tools.tool_repair import execute_repair
+from .common import _parse_body, _get_username
 
 logger = logging.getLogger(__name__)
-
-
-def _get_username(request) -> str:
-    cookies = request.cookies
-    return cookies.get("username", "")
-
-
-async def _parse_body(request):
-    try:
-        return await request.json()
-    except Exception:
-        return None
 
 
 async def handle_repair_execute(request):

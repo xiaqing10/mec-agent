@@ -6,22 +6,12 @@ from user_memory_store import (
     get_user_memories, upsert_memory, delete_memory, update_memory,
     get_user_memory_summary, get_memory_char_usage, CHAR_LIMITS
 )
+from .common import _parse_body, _get_username
 
 logger = logging.getLogger(__name__)
 
 VALID_FACT_TYPES = {"preference", "habit", "fact"}
 
-
-def _get_username(request) -> str:
-    cookies = request.cookies
-    return cookies.get("username", "")
-
-
-async def _parse_body(request):
-    try:
-        return await request.json()
-    except Exception:
-        return None
 
 
 async def handle_memory_list(request):

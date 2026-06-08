@@ -3,6 +3,7 @@ import asyncio
 import time
 import logging
 from aiohttp import web
+from .common import _parse_body, _get_username
 
 logger = logging.getLogger(__name__)
 
@@ -470,18 +471,6 @@ async def handle_raw_diagnose(request):
         return web.json_response({"success": True, "action": action, "data": parsed})
     except (json.JSONDecodeError, TypeError):
         return web.json_response({"success": True, "action": action, "data": {"result": result}})
-
-
-async def _parse_body(request):
-    try:
-        return await request.json()
-    except Exception:
-        return None
-
-
-def _get_username(request) -> str:
-    cookies = request.cookies
-    return cookies.get("username", "")
 
 
 def _is_trivial(text: str) -> bool:

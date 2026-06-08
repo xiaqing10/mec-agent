@@ -3,20 +3,10 @@ import logging
 from aiohttp import web
 
 from feedback_store import create_feedback_record, update_rating, get_feedback_stats, get_recent_feedback, update_feedback_by_id, delete_feedback_by_id, pin_feedback, unpin_feedback, get_pinned_feedback, get_user_conversation_summary
+from .common import _parse_body, _get_username
 
 logger = logging.getLogger(__name__)
 
-
-def _get_username(request) -> str:
-    cookies = request.cookies
-    return cookies.get("username", "")
-
-
-async def _parse_body(request):
-    try:
-        return await request.json()
-    except Exception:
-        return None
 
 
 async def handle_feedback(request):
