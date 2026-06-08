@@ -5,7 +5,7 @@ from datetime import datetime
 
 from langchain_core.tools import tool
 
-from ._shared import _diag_progress_callback, _notify_progress, _summarize_log_errors, _build_diag_result
+from ._shared import _notify_progress, _summarize_log_errors, _build_diag_result
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ def mec_diagnose_device(ip: str, project: str = "") -> str:
 
     dimensions = []
 
-    cont = diagnose_container_offline(ip, progress_cb=_diag_progress_callback)
+    cont = diagnose_container_offline(ip, progress_cb=_notify_progress)
     cd = cont.get("diagnosis", {})
 
     ce = cd.get("error", "")
@@ -169,7 +169,7 @@ def mec_diagnose_device(ip: str, project: str = "") -> str:
 
     # 容器存在且SSH可达（或可fallback docker exec），继续采集内部数据
     container_ssh_info = cd.get("_container_ssh_info")
-    img = diagnose_zero_images(ip, container_ssh_info=container_ssh_info, progress_cb=_diag_progress_callback)
+    img = diagnose_zero_images(ip, container_ssh_info=container_ssh_info, progress_cb=_notify_progress)
     iz = img.get("diagnosis", {})
     ic = iz.get("today_image_count", -1)
 
