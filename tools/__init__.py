@@ -19,6 +19,7 @@ from .tool_mongodb import (
     query_server_analysis_report,
 )
 from .tool_evolve import generate_improvement_report
+from .tool_rag_knowledge import rag_search_knowledge
 
 TOOLS = [
     mec_diagnose_device,
@@ -45,6 +46,7 @@ TOOLS = [
     query_server_traffic_pattern,
     query_server_analysis_report,
     generate_improvement_report,
+    rag_search_knowledge,
 ]
 
 __all__ = [

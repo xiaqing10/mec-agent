@@ -32,13 +32,18 @@ AVAILABLE_MODELS = {
         "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
         "api_key": "a385d094-7f69-41e0-b3b8-6c773877e97b"
     },
+    "mimo-v2.5-pro": {
+        "label": "mimo-v2.5-pro（小米）",
+        "base_url": "https://api.xiaomimimo.com/v1",
+        "api_key": "sk-cba8zsfpygw2fcdn3gy14a3nn8tmdkw2e0sr41q3xuk1y05d"
+    },
     "deepseek-v4-flash-baidu": {
-        "label": "DeepSeek V4 Flash（百度云）",
+        "label": "DeepSeek V4 Flash（百度云-弃用）",
         "base_url": "https://qianfan.baidubce.com/v2/coding",
         "api_key": "bce-v3/ALTAKSP-8rIUW18KeRfA0NloMkZvX/f8158fdb129ce95064be0550ec888e737416ba39"
     },
     "deepseek-v4-pro-baidu": {
-        "label": "DeepSeek V4 Pro（百度云）",
+        "label": "DeepSeek V4 Pro（百度云-弃用）",
         "base_url": "https://qianfan.baidubce.com/v2/coding",
         "api_key": "bce-v3/ALTAKSP-8rIUW18KeRfA0NloMkZvX/f8158fdb129ce95064be0550ec888e737416ba39"
     }
@@ -145,3 +150,23 @@ EVENT_IMAGE_TEMP_DIR = os.getenv("EVENT_IMAGE_TEMP_DIR", "/tmp/event_images")
 
 # 临时图片保留时间（小时）
 EVENT_IMAGE_TTL_HOURS = int(os.getenv("EVENT_IMAGE_TTL_HOURS", "24"))
+
+# ──────────────────────────────────────────────
+# RAG (Retrieval-Augmented Generation) 配置
+# ──────────────────────────────────────────────
+
+# RAG 功能开关（设为 false 可关闭 RAG，回退到纯 LLM 模式）
+RAG_ENABLED = os.getenv("RAG_ENABLED", "true").lower() == "true"
+
+# ChromaDB 持久化路径
+RAG_CHROMA_DIR = os.getenv("RAG_CHROMA_DIR", str(Path(__file__).parent / "rag_data" / "chroma"))
+
+# Embedding 模型名称（HuggingFace 模型 ID）
+RAG_EMBEDDING_MODEL = os.getenv("RAG_EMBEDDING_MODEL", "shibing624/text2vec-base-chinese")
+
+# 文本分块参数
+RAG_CHUNK_SIZE = int(os.getenv("RAG_CHUNK_SIZE", "500"))
+RAG_CHUNK_OVERLAP = int(os.getenv("RAG_CHUNK_OVERLAP", "50"))
+
+# 检索参数
+RAG_TOP_K = int(os.getenv("RAG_TOP_K", "5"))

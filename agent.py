@@ -221,6 +221,7 @@ def agent_node(state: AgentState) -> dict:
 - **memory(action, target, key, value)**: 管理用户记忆（偏好/习惯/事实）
 - **help_info()**: 帮助信息
 - **generate_improvement_report(days)**: 生成用户反馈改进报告。基于用户评价数据和LLM分析，给出Agent行为/工具/状态管理等维度的优化建议
+- **rag_search_knowledge(query, category, top_k)**: 搜索运维知识库，查找与问题相关的历史案例和解决方案。category: all(全部)/diagnosis(诊断案例)/repair(修复记录)/knowledge(运维文档)/memory(用户记忆)
 
 ### 交通数据分析（MongoDB数据，仅当用户明确提到"服务器"相关时使用，如"服务器流量""服务器事件""服务器雷达"等；用户不提"服务器"则默认查MEC设备数据）
 - **query_server_traffic_flow(road_name, start_time, end_time, direction)**: 断面流量查询（车流量/平均速度/时间占有率/道路状态）
@@ -285,6 +286,32 @@ def agent_node(state: AgentState) -> dict:
                 mem_parts.append("**已知信息**（用户告知的背景事实）：\n" + "\n".join(f"- {m['value']}" for m in fact_items))
             if mem_parts:
                 system_prompt += "\n\n## 关于当前用户\n" + "\n\n".join(mem_parts)
+
+    # Inject RAG context
+    from config import RAG_ENABLED
+    if RAG_ENABLED:
+        try:
+            from rag.retriever import retrieve_relevant_context
+            # 获取用户最新消息作为查询
+            user_msg = ""
+            for msg in reversed(messages):
+                if hasattr(msg, "content") and isinstance(msg.content, str) and msg.content.strip():
+                    user_msg = msg.content
+                    break
+            if user_msg and len(user_msg) >= 4:
+                rag_results = retrieve_relevant_context(
+                    query=user_msg,
+                    user_id=user_id or "",
+                    project=ctx_project,
+                    ip=ctx_ip,
+                    top_k=5,
+                )
+                if rag_results:
+                    system_prompt += "\n\n## 相关历史知识（RAG 检索）\n"
+                    system_prompt += "以下是与当前问题相关的历史诊断记录和运维知识，供参考：\n\n"
+                    system_prompt += rag_results
+        except Exception as e:
+            logger.warning("⚠️ RAG 检索失败（不影响正常流程）: %s", e)
 
     # Insert system prompt as first message if not already there
     # 主动裁剪：保留最近 N 条消息，防止 token 溢出或内容安全过滤
