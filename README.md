@@ -293,3 +293,139 @@ python3 server.py
 | ROS | roscore 运行状态、topic 频率 |
 | 数据源 | 今日图片数量 |
 | 传感器 | 摄像头和雷达在线率 |
+
+---
+
+## RAG 知识检索增强系统
+
+### 功能说明
+
+RAG (Retrieval-Augmented Generation) 系统通过向量检索技术，将历史诊断案例、运维知识、修复记录等注入到 LLM 的上下文中，提升诊断准确性和回复质量。
+
+### 数据来源
+
+| 数据源 | 路径 | 内容 |
+|--------|------|------|
+| 诊断历史 | `diagnose_logs/project_history/*.json` | 各项目设备的历史诊断记录 |
+| 修复日志 | `repair_logs/repair_*.jsonl` | 修复操作记录（成功/失败） |
+| 运维知识 | `knowledge/*.md` | 故障排查手册、运维文档 |
+| 用户记忆 | `user_memory.db` | 用户偏好和习惯 |
+
+### 工作流程
+
+```
+用户提问
+    ↓
+1. RAG 自动检索相关知识（最近7天，带时间衰减）
+    ├── 历史诊断案例
+    ├── 运维知识
+    ├── 修复记录
+    └── 用户记忆
+    ↓
+2. 检索结果注入 system prompt
+    ↓
+3. LLM 基于增强后的上下文生成回复
+    ↓
+4. 诊断完成后，有明确根因的结果自动入库
+```
+
+### 质量过滤规则
+
+| 数据类型 | 入库条件 | 说明 |
+|----------|----------|------|
+| 诊断结果 | `root_cause` 不为空且不为 `unknown` | 只入库有明确根因的诊断 |
+| 诊断结果 | `overall != "normal"` | 跳过正常设备的诊断 |
+| 用户反馈 | `rating == "satisfied"` | 只入库用户满意的对话 |
+| 修复日志 | `success == True` | 只入库成功的修复操作 |
+
+### 配置项
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `RAG_ENABLED` | `true` | RAG 功能开关 |
+| `RAG_EMBEDDING_MODEL` | `rag_data/chroma/text2vec-base-chinese` | Embedding 模型路径 |
+| `RAG_TOP_K` | `5` | 默认返回结果数 |
+| `RAG_MAX_DAYS` | `7` | 只检索最近7天的记录 |
+
+### 使用方式
+
+**自动检索**：每次用户提问时，系统自动检索相关知识注入上下文。
+
+**主动查询**：LLM 可调用 `rag_search_knowledge` 工具：
+```
+搜索知识库中关于"图片为0"的解决方案
+```
+
+**手动导入知识**：
+```bash
+python import_knowledge.py
+```
+
+### 文件结构
+
+```
+rag/
+├── __init__.py        # 模块初始化
+├── config.py          # 配置（模型路径、检索参数）
+├── embeddings.py      # Embedding 接口封装
+├── retriever.py       # 检索器（时间衰减、状态过滤）
+└── ingest.py          # 数据导入管道（质量过滤）
+```
+
+---
+
+## 反馈系统
+
+### 功能说明
+
+反馈系统收集用户对 Agent 回复的评价，用于优化回复质量和 RAG 知识库。
+
+### 反馈流程
+
+1. 用户完成一轮对话后，前端弹出反馈窗口
+2. 用户可选择评分（满意/部分满意/不满意）并填写文字反馈
+3. 反馈记录保存到 `feedback.db`
+4. 高评分反馈可作为 RAG 知识库的参考
+
+### 反馈评分
+
+| 评分 | 说明 |
+|------|------|
+| `satisfied` | 满意，回复准确有用 |
+| `partial` | 部分满意，回复有帮助但不完整 |
+| `unsatisfied` | 不满意，回复错误或无帮助 |
+
+### 数据结构
+
+```sql
+CREATE TABLE feedback (
+    id INTEGER PRIMARY KEY,
+    conversation_id TEXT,
+    user_id TEXT,
+    intent TEXT,
+    actions TEXT,
+    rating TEXT,
+    feedback_text TEXT,
+    auto_correctness INTEGER,
+    created_at TEXT
+);
+```
+
+---
+
+## 交通数据分析
+
+### 数据来源
+
+| 数据源 | 集合 | 说明 |
+|--------|------|------|
+| 流量数据 | `flowStat` | 断面流量统计（5分钟粒度预聚合） |
+| 事件数据 | `event` | 雷达事件记录（逆行/超速/停车等） |
+| 设备指标 | `metric` | 设备运行健康指标（CPU/内存/磁盘/温度） |
+
+### 流量查询规则
+
+- **数据源**：`flowStat` 集合（5分钟粒度预聚合）
+- **方向处理**：排除"双向"记录（双向=上行+下行，会导致重复计算）
+- **时间字段**：`EndTime`（统计结束时间）
+- **默认时间范围**：最近15分钟
