@@ -47,6 +47,14 @@ def save_diagnosis(project: str, device_name: str, ip: str, diag_result: dict):
     with open(_project_file(project), "w") as f:
         json.dump(records, f, ensure_ascii=False, indent=2)
 
+    # RAG 增量入库（异步，不阻塞主流程）
+    try:
+        from rag.ingest import ingest_diagnosis_record
+        # 传递完整的诊断结果，由 ingest_diagnosis_record 进行质量过滤
+        ingest_diagnosis_record(project, device_name, ip, diag_result)
+    except Exception:
+        pass  # 不影响主流程
+
 
 def build_history_summary(project: str) -> str:
     records = load_project_records(project)

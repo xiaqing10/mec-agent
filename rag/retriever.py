@@ -2,12 +2,13 @@
 RAG 检索器模块
 
 提供向量检索功能，支持：
-- 诊断历史检索
+- 诊断历史检索（带时间衰减和状态过滤）
 - 运维知识检索
 - 相似案例匹配
 """
 
 import logging
+from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 
 from .config import (
@@ -18,6 +19,10 @@ from .config import (
 from .embeddings import embed_query
 
 logger = logging.getLogger(__name__)
+
+# 时间衰减配置
+RAG_MAX_DAYS = 7  # 只检索最近7天的记录
+RAG_TIME_WEIGHT = True  # 是否启用时间衰减
 
 # ChromaDB 客户端缓存
 _chroma_client = None
@@ -45,6 +50,8 @@ def retrieve_relevant_context(
     project: str = "",
     ip: str = "",
     top_k: int = None,
+    max_days: int = None,
+    exclude_abnormal: bool = False,
 ) -> str:
     """检索与当前问题相关的上下文信息。
 
@@ -57,6 +64,8 @@ def retrieve_relevant_context(
         project: 当前项目名（用于过滤诊断历史）
         ip: 当前设备 IP（用于过滤诊断历史）
         top_k: 返回结果数量，默认使用配置值
+        max_days: 最大检索天数，默认使用配置值
+        exclude_abnormal: 是否排除历史异常记录（用于设备已恢复的情况）
 
     Returns:
         检索结果文本，如果没有相关内容则返回空字符串
@@ -66,23 +75,34 @@ def retrieve_relevant_context(
 
     if top_k is None:
         top_k = RAG_TOP_K
+    if max_days is None:
+        max_days = RAG_MAX_DAYS
 
     results = []
 
-    # 1. 检索诊断历史
+    # 1. 检索诊断历史（带时间衰减）
     try:
-        diag_results = _search_diagnosis(query, project, ip, top_k=min(top_k, 3))
+        diag_results = _search_diagnosis(
+            query, project, ip,
+            top_k=min(top_k, 3),
+            max_days=max_days,
+            exclude_abnormal=exclude_abnormal,
+        )
         if diag_results:
-            results.append("### 历史诊断案例\n")
+            results.append("### 历史诊断案例（参考）\n")
             for r in diag_results:
-                results.append(f"- **{r.get('device', '')}** ({r.get('project', '')}): {r.get('issue', '无描述')}")
+                timestamp = r.get('timestamp', '')
+                if timestamp:
+                    results.append(f"- **{r.get('device', '')}** ({r.get('project', '')}, {timestamp}): {r.get('issue', '无描述')}")
+                else:
+                    results.append(f"- **{r.get('device', '')}** ({r.get('project', '')}): {r.get('issue', '无描述')}")
                 if r.get('solution'):
                     results.append(f"  解决方案: {r['solution']}")
             results.append("")
     except Exception as e:
         logger.debug("诊断历史检索失败: %s", e)
 
-    # 2. 检索运维知识
+    # 2. 检索运维知识（无时间衰减）
     try:
         knowledge_results = _search_knowledge(query, top_k=min(top_k, 3))
         if knowledge_results:
@@ -93,9 +113,9 @@ def retrieve_relevant_context(
     except Exception as e:
         logger.debug("运维知识检索失败: %s", e)
 
-    # 3. 检索修复日志
+    # 3. 检索修复日志（只检索成功的修复）
     try:
-        repair_results = _search_repair(query, ip, top_k=min(top_k, 2))
+        repair_results = _search_repair(query, ip, top_k=min(top_k, 2), max_days=max_days)
         if repair_results:
             results.append("### 相关修复记录\n")
             for r in repair_results:
@@ -104,7 +124,7 @@ def retrieve_relevant_context(
     except Exception as e:
         logger.debug("修复日志检索失败: %s", e)
 
-    # 4. 检索用户记忆
+    # 4. 检索用户记忆（无时间衰减）
     if user_id:
         try:
             memory_results = _search_memory(query, user_id, top_k=min(top_k, 2))
@@ -138,8 +158,24 @@ def find_similar_cases(
     return _search_diagnosis(query, top_k=top_k)
 
 
-def _search_diagnosis(query: str, project: str = "", ip: str = "", top_k: int = 3) -> List[Dict]:
-    """检索诊断历史"""
+def _search_diagnosis(
+    query: str,
+    project: str = "",
+    ip: str = "",
+    top_k: int = 3,
+    max_days: int = None,
+    exclude_abnormal: bool = False,
+) -> List[Dict]:
+    """检索诊断历史（带时间衰减和状态过滤）
+
+    Args:
+        query: 搜索查询
+        project: 项目名过滤
+        ip: 设备IP过滤
+        top_k: 返回结果数量
+        max_days: 最大检索天数
+        exclude_abnormal: 是否排除异常记录
+    """
     try:
         collection = _get_collection(RAG_COLLECTION_DIAGNOSIS)
         # 构建 where 条件
@@ -148,21 +184,29 @@ def _search_diagnosis(query: str, project: str = "", ip: str = "", top_k: int = 
             where["project"] = project
         if ip:
             where["ip"] = ip
+        # 时间衰减：只检索最近 max_days 天的记录
+        if max_days and max_days > 0:
+            cutoff = datetime.now() - timedelta(days=max_days)
+            where["timestamp"] = {"$gte": cutoff.isoformat()}
+        # 排除异常记录
+        if exclude_abnormal:
+            where["overall"] = {"$in": ["normal", "warning"]}
 
         query_embedding = embed_query(query)
         results = collection.query(
             query_embeddings=[query_embedding],
             n_results=top_k,
             where=where if where else None,
-            include=["documents", "metadatas"],
+            include=["documents", "metadatas", "distances"],
         )
 
         docs = results.get("documents", [[]])[0]
         metas = results.get("metadatas", [[]])[0]
+        dists = results.get("distances", [[]])[0]
 
         return [
-            {"content": doc, **meta}
-            for doc, meta in zip(docs, metas)
+            {"content": doc, **meta, "similarity": 1 - dist}
+            for doc, meta, dist in zip(docs, metas, dists)
         ]
     except Exception as e:
         logger.debug("诊断历史检索异常: %s", e)
@@ -192,13 +236,19 @@ def _search_knowledge(query: str, top_k: int = 3) -> List[Dict]:
         return []
 
 
-def _search_repair(query: str, ip: str = "", top_k: int = 2) -> List[Dict]:
-    """检索修复日志"""
+def _search_repair(query: str, ip: str = "", top_k: int = 2, max_days: int = None) -> List[Dict]:
+    """检索修复日志（只检索成功的修复，带时间衰减）"""
     try:
         collection = _get_collection(RAG_COLLECTION_REPAIR)
         where = {}
         if ip:
             where["ip"] = ip
+        # 只检索成功的修复
+        where["success"] = True
+        # 时间衰减
+        if max_days and max_days > 0:
+            cutoff = datetime.now() - timedelta(days=max_days)
+            where["timestamp"] = {"$gte": cutoff.isoformat()}
 
         query_embedding = embed_query(query)
         results = collection.query(

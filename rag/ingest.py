@@ -63,9 +63,10 @@ def ingest_diagnosis_record(
     ip: str,
     diag_result: dict,
 ) -> None:
-    """将诊断记录增量导入向量库。
+    """将诊断记录增量导入向量库（带质量过滤）。
 
     在诊断完成后调用，将诊断结果写入 ChromaDB。
+    只导入有明确根因的诊断结果，避免错误诊断污染知识库。
 
     Args:
         project: 项目名
@@ -74,15 +75,22 @@ def ingest_diagnosis_record(
         diag_result: 诊断结果字典
     """
     try:
+        # 质量过滤：只导入有明确根因的诊断
+        overall = diag_result.get("overall", "unknown")
+        root_cause = diag_result.get("root_cause", "")
+        if overall == "unknown" or not root_cause:
+            logger.debug("⏭️ 跳过 RAG 入库（无明确根因）: %s %s", project, device_name)
+            return
+        if overall == "normal":
+            logger.debug("⏭️ 跳过 RAG 入库（设备正常）: %s %s", project, device_name)
+            return
+
         from .config import RAG_CHROMA_DIR
         import chromadb
 
         client = chromadb.PersistentClient(path=RAG_CHROMA_DIR)
         collection = client.get_or_create_collection(name=RAG_COLLECTION_DIAGNOSIS)
 
-        # 构建文档内容
-        overall = diag_result.get("overall", "unknown")
-        root_cause = diag_result.get("root_cause", "")
         diagnosis_time = diag_result.get("diagnosis_time", "")
 
         dimensions = diag_result.get("dimensions", [])
@@ -120,7 +128,7 @@ def ingest_diagnosis_record(
             ids=[doc_id],
         )
 
-        logger.info("✅ 诊断记录已导入 RAG: %s %s", project, device_name)
+        logger.info("✅ 诊断记录已导入 RAG: %s %s (根因: %s)", project, device_name, root_cause)
 
     except Exception as e:
         logger.warning("⚠️ 诊断记录导入 RAG 失败: %s", e)
