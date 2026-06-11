@@ -16,10 +16,10 @@ RAG_CHROMA_DIR = os.getenv(
     str(PROJECT_DIR / "rag_data" / "chroma")
 )
 
-# Embedding 模型路径（本地已下载的模型）
+# Embedding 模型路径（优先使用 HuggingFace 缓存）
 RAG_EMBEDDING_MODEL = os.getenv(
     "RAG_EMBEDDING_MODEL",
-    str(Path(__file__).parent.parent / "rag_data" / "chroma" / "text2vec-base-chinese")
+    str(Path.home() / ".cache" / "huggingface" / "hub" / "models--shibing624--text2vec-base-chinese" / "snapshots" / "183bb99aa7af74355fb58d16edf8c13ae7c5433e")
 )
 
 # 文本分块参数
