@@ -120,16 +120,21 @@ def rag_list_knowledge(
             count = collection.count()
             if count > 0:
                 where = {"project": project} if project else None
-                results = collection.get(limit=limit, where=where, include=["metadatas"])
+                results = collection.get(limit=limit, where=where, include=["documents", "metadatas"])
                 metas = results.get("metadatas", [])
+                docs = results.get("documents", [])
                 lines.append(f"### 诊断历史 ({count}条)")
-                for i, meta in enumerate(metas, 1):
+                for i, (meta, doc) in enumerate(zip(metas, docs), 1):
                     proj = meta.get("project", "")
                     device = meta.get("device", "")
                     ip = meta.get("ip", "")
-                    root_cause = meta.get("root_cause", "")
-                    timestamp = meta.get("timestamp", "")[:10]
-                    lines.append(f"{i}. [{proj}] {device} ({ip}): 根因={root_cause}, {timestamp}")
+                    diag_type = meta.get("diag_type", "")
+                    issue = meta.get("issue", "")
+                    today_image_count = meta.get("today_image_count", -1)
+                    timestamp = meta.get("timestamp", "")[:16]
+                    lines.append(f"{i}. [{proj}] {device} ({ip})")
+                    lines.append(f"   时间: {timestamp} | 类型: {diag_type} | 图片数: {today_image_count}")
+                    lines.append(f"   问题: {issue[:100]}")
                 if count > limit:
                     lines.append(f"  ... 还有 {count - limit} 条记录")
             else:
