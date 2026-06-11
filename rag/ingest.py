@@ -75,14 +75,21 @@ def ingest_diagnosis_record(
         diag_result: 诊断结果字典
     """
     try:
-        # 质量过滤：只导入有明确根因的诊断
-        overall = diag_result.get("overall", "unknown")
-        root_cause = diag_result.get("root_cause", "")
-        if overall == "unknown" or not root_cause:
-            logger.debug("⏭️ 跳过 RAG 入库（无明确根因）: %s %s", project, device_name)
-            return
-        if overall == "normal":
+        # 质量过滤：只导入有明确问题的诊断
+        diagnosis = diag_result.get("diagnosis", {})
+        diag_type = diag_result.get("type", "")
+        issue = diagnosis.get("issue", "")
+        error = diagnosis.get("error", "")
+        today_image_count = diagnosis.get("today_image_count", -1)
+        
+        # 跳过正常设备（今天图片数 > 0 且没有错误）
+        if today_image_count > 0 and not error and "恢复正常" in issue:
             logger.debug("⏭️ 跳过 RAG 入库（设备正常）: %s %s", project, device_name)
+            return
+        
+        # 跳过没有明确问题的诊断
+        if not diag_type and not issue and not error:
+            logger.debug("⏭️ 跳过 RAG 入库（无明确问题）: %s %s", project, device_name)
             return
 
         from .config import RAG_CHROMA_DIR
@@ -91,21 +98,19 @@ def ingest_diagnosis_record(
         client = chromadb.PersistentClient(path=RAG_CHROMA_DIR)
         collection = client.get_or_create_collection(name=RAG_COLLECTION_DIAGNOSIS)
 
-        diagnosis_time = diag_result.get("diagnosis_time", "")
+        diagnosis_time = diag_result.get("timestamp", "")
+        if not diagnosis_time:
+            from datetime import datetime
+            diagnosis_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        dimensions = diag_result.get("dimensions", [])
-        dim_summary = "; ".join(
-            f"{d['name']}({d['status']})"
-            for d in dimensions
-            if d.get("status") in ("error", "warning")
-        )
-
+        # 构建文档内容
         doc_content = (
             f"项目: {project}, 设备: {device_name}, IP: {ip}\n"
             f"诊断时间: {diagnosis_time}\n"
-            f"诊断结果: {overall}\n"
-            f"根因: {root_cause}\n"
-            f"异常维度: {dim_summary}"
+            f"诊断类型: {diag_type}\n"
+            f"问题: {issue}\n"
+            f"错误: {error}\n"
+            f"今日图片数: {today_image_count}"
         )
 
         # 构建 metadata
@@ -113,8 +118,9 @@ def ingest_diagnosis_record(
             "project": project,
             "device": device_name,
             "ip": ip,
-            "overall": overall,
-            "root_cause": root_cause,
+            "diag_type": diag_type,
+            "issue": issue[:200] if issue else "",
+            "today_image_count": today_image_count,
             "timestamp": diagnosis_time,
         }
 
@@ -128,7 +134,7 @@ def ingest_diagnosis_record(
             ids=[doc_id],
         )
 
-        logger.info("✅ 诊断记录已导入 RAG: %s %s (根因: %s)", project, device_name, root_cause)
+        logger.info("✅ 诊断记录已导入 RAG: %s %s (类型: %s, 问题: %s)", project, device_name, diag_type, issue[:50] if issue else "无")
 
     except Exception as e:
         logger.warning("⚠️ 诊断记录导入 RAG 失败: %s", e)
