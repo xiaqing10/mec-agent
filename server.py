@@ -64,7 +64,7 @@ async def handle_health(request):
 
 async def handle_version(request):
     return web.json_response({
-        "version": "3.4",
+        "version": "4.0",
         "service": "智慧交通垂域智能体",
         "features": ["日志分析", "设备诊断", "钉钉推送", "流式输出", "Markdown渲染", "LangGraph持久记忆"]
     })
