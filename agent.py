@@ -222,6 +222,7 @@ def agent_node(state: AgentState) -> dict:
 - **help_info()**: 帮助信息
 - **generate_improvement_report(days)**: 生成用户反馈改进报告。基于用户评价数据和LLM分析，给出Agent行为/工具/状态管理等维度的优化建议
 - **rag_search_knowledge(query, category, top_k)**: 搜索运维知识库，查找与问题相关的历史案例和解决方案。category: all(全部)/diagnosis(诊断案例)/repair(修复记录)/knowledge(运维文档)/memory(用户记忆)
+- **rag_list_knowledge(category, limit, project)**: 列出RAG知识库中的内容，查看已存储的知识数据。category: all(全部)/diagnosis(诊断案例)/repair(修复记录)/memory(用户记忆)/knowledge(运维知识)
 
 ### 交通数据分析（MongoDB数据，仅当用户明确提到"服务器"相关时使用，如"服务器流量""服务器事件""服务器雷达"等；用户不提"服务器"则默认查MEC设备数据）
 - **query_server_traffic_flow(road_name, start_time, end_time, direction)**: 断面流量查询（车流量/平均速度/时间占有率/道路状态）

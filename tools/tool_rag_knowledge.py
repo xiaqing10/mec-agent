@@ -76,3 +76,135 @@ def rag_search_knowledge(
         lines.append("")
 
     return "\n".join(lines)
+
+
+@tool
+def rag_list_knowledge(
+    category: str = "all",
+    limit: int = 10,
+    project: str = "",
+) -> str:
+    """列出 RAG 知识库中的内容，查看已存储的知识数据。
+
+    可用于：
+    - 查看知识库中有哪些诊断案例
+    - 查看知识库中有哪些修复记录
+    - 查看知识库中有哪些运维知识文档
+    - 查看知识库中有哪些用户记忆
+
+    Args:
+        category: 要查看的类别 - all(全部)/diagnosis(诊断案例)/repair(修复记录)/memory(用户记忆)/knowledge(运维知识)
+        limit: 每个类别显示的记录数，默认10条
+        project: 按项目过滤（仅对 diagnosis 有效），如 "德会"
+    """
+    from rag.config import (
+        RAG_CHROMA_DIR,
+        RAG_COLLECTION_DIAGNOSIS,
+        RAG_COLLECTION_KNOWLEDGE,
+        RAG_COLLECTION_REPAIR,
+        RAG_COLLECTION_MEMORY,
+    )
+    import chromadb
+
+    try:
+        client = chromadb.PersistentClient(path=RAG_CHROMA_DIR)
+    except Exception as e:
+        return f"❌ ChromaDB 连接失败: {e}"
+
+    lines = ["📚 **RAG 知识库内容**\n"]
+
+    # 诊断历史
+    if category in ("all", "diagnosis"):
+        try:
+            collection = client.get_or_create_collection(name=RAG_COLLECTION_DIAGNOSIS)
+            count = collection.count()
+            if count > 0:
+                where = {"project": project} if project else None
+                results = collection.get(limit=limit, where=where, include=["metadatas"])
+                metas = results.get("metadatas", [])
+                lines.append(f"### 诊断历史 ({count}条)")
+                for i, meta in enumerate(metas, 1):
+                    proj = meta.get("project", "")
+                    device = meta.get("device", "")
+                    ip = meta.get("ip", "")
+                    root_cause = meta.get("root_cause", "")
+                    timestamp = meta.get("timestamp", "")[:10]
+                    lines.append(f"{i}. [{proj}] {device} ({ip}): 根因={root_cause}, {timestamp}")
+                if count > limit:
+                    lines.append(f"  ... 还有 {count - limit} 条记录")
+            else:
+                lines.append("### 诊断历史 (0条)")
+            lines.append("")
+        except Exception as e:
+            lines.append(f"### 诊断历史: 查询失败 - {e}\n")
+
+    # 修复记录
+    if category in ("all", "repair"):
+        try:
+            collection = client.get_or_create_collection(name=RAG_COLLECTION_REPAIR)
+            count = collection.count()
+            if count > 0:
+                results = collection.get(limit=limit, include=["metadatas"])
+                metas = results.get("metadatas", [])
+                lines.append(f"### 修复记录 ({count}条)")
+                for i, meta in enumerate(metas, 1):
+                    ip = meta.get("ip", "")
+                    action = meta.get("action", "")
+                    success = meta.get("success", False)
+                    timestamp = meta.get("timestamp", "")[:10]
+                    status = "成功" if success else "失败"
+                    lines.append(f"{i}. {ip} - {action}: {status}, {timestamp}")
+                if count > limit:
+                    lines.append(f"  ... 还有 {count - limit} 条记录")
+            else:
+                lines.append("### 修复记录 (0条)")
+            lines.append("")
+        except Exception as e:
+            lines.append(f"### 修复记录: 查询失败 - {e}\n")
+
+    # 用户记忆
+    if category in ("all", "memory"):
+        try:
+            collection = client.get_or_create_collection(name=RAG_COLLECTION_MEMORY)
+            count = collection.count()
+            if count > 0:
+                results = collection.get(limit=limit, include=["documents", "metadatas"])
+                docs = results.get("documents", [])
+                metas = results.get("metadatas", [])
+                lines.append(f"### 用户记忆 ({count}条)")
+                for i, (doc, meta) in enumerate(zip(docs, metas), 1):
+                    fact_type = meta.get("fact_type", "")
+                    user_id = meta.get("user_id", "")
+                    confidence = meta.get("confidence", 0)
+                    lines.append(f"{i}. [{fact_type}] {user_id}: {doc[:80]}... (置信度={confidence})")
+                if count > limit:
+                    lines.append(f"  ... 还有 {count - limit} 条记录")
+            else:
+                lines.append("### 用户记忆 (0条)")
+            lines.append("")
+        except Exception as e:
+            lines.append(f"### 用户记忆: 查询失败 - {e}\n")
+
+    # 运维知识
+    if category in ("all", "knowledge"):
+        try:
+            collection = client.get_or_create_collection(name=RAG_COLLECTION_KNOWLEDGE)
+            count = collection.count()
+            if count > 0:
+                results = collection.get(limit=limit, include=["documents", "metadatas"])
+                docs = results.get("documents", [])
+                metas = results.get("metadatas", [])
+                lines.append(f"### 运维知识 ({count}条)")
+                for i, (doc, meta) in enumerate(zip(docs, metas), 1):
+                    source = meta.get("source", "")
+                    chunk_index = meta.get("chunk_index", 0)
+                    lines.append(f"{i}. {source} [chunk {chunk_index}]: {doc[:80]}...")
+                if count > limit:
+                    lines.append(f"  ... 还有 {count - limit} 条记录")
+            else:
+                lines.append("### 运维知识 (0条)")
+            lines.append("")
+        except Exception as e:
+            lines.append(f"### 运维知识: 查询失败 - {e}\n")
+
+    return "\n".join(lines)
