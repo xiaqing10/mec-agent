@@ -81,6 +81,8 @@ def test_webui_repairs_escaped_flattened_tables():
     assert "__MD_FENCE_" in source
     assert "Normalize separator rows that use typographic dashes" in source
     assert "row.replace(/[-—–－]+/g, '---')" in source
+    assert "Split only when the heading line clearly contains" in source
+    assert "s = s.replace(/(^|\\n)(#{2,6} [^\\n|]+)(\\|[^\\n]+\\|)" in source
 
 def test_webui_markdown_repair_declares_fence_regex():
     source = _read_webui()
