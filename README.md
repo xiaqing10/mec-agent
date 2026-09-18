@@ -337,6 +337,7 @@ LangGraph 当前使用 `AsyncSqliteSaver` 持久化会话状态；SQLite checkpo
 ## Web UI Markdown 渲染与缓存
 
 - 聊天消息继续使用 markdown-it 渲染；同时增加轻量级 `repairFlattenedMarkdown()` 保护，只在检测到标题、代码围栏、表格分隔线或列表标记被上游流式输出粘连时恢复必要的块级换行，不重写正常 Markdown。
+- 对模型偶发生成的中文/排版破折号表格分隔行（如 `|—|—|`）做受限兼容：仅当整行明确是管道符+破折号分隔结构时转换为 Markdown 要求的 ASCII `---`，避免把普通正文中的 `—` 误改。
 - Agent Prompt 明确要求模型保留真实 Markdown 换行、段落空行和标准表格语法，避免把回答压成单行或将表格列分隔符写成转义形式。
 - Web UI 页面响应使用 no-store / no-cache，避免浏览器继续使用旧版页面。
 
