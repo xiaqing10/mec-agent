@@ -29,34 +29,34 @@ AVAILABLE_MODELS = {
     "deepseek-v4-flash": {
         "label": "DeepSeek V4 Flash（火山）",
         "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
-        "api_key": VOLCENGINE_API_KEY"
+        "api_key": VOLCENGINE_API_KEY
     },
     "glm-5.1": {
         "label": "GLM-5.1（火山）",
         "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
-        "api_key": VOLCENGINE_API_KEY"
+        "api_key": VOLCENGINE_API_KEY
     },
     "deepseek-v4-pro": {
         "label": "deepseek-v4-pro（火山）",
         "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
-        "api_key": VOLCENGINE_API_KEY"
+        "api_key": VOLCENGINE_API_KEY
     },
     "deepseek-v4-flash-baidu": {
         "label": "DeepSeek V4 Flash（百度云）",
         "base_url": "https://qianfan.baidubce.com/v2/coding",
-        "api_key": BAIDU_API_KEY"
+        "api_key": BAIDU_API_KEY
     },
     "deepseek-v4-pro-baidu": {
         "label": "DeepSeek V4 Pro（百度云）",
         "base_url": "https://qianfan.baidubce.com/v2/coding",
-        "api_key": BAIDU_API_KEY"
+        "api_key": BAIDU_API_KEY
     }
 }
 
 # API 配置
 API_HOST = os.getenv("SELF_AGENT_HOST", "0.0.0.0")
 API_PORT = int(os.getenv("SELF_AGENT_PORT", "8645"))
-API_KEY = os.getenv("SELF_AGENT_API_KEY", "mec-diagnose-agent-2026")
+API_KEY = os.getenv("SELF_AGENT_API_KEY", "")
 
 # HTTPS 配置（设为空字符串或 None 则仅 HTTP）
 SSL_CERT = os.getenv("SSL_CERT", "")
@@ -90,7 +90,7 @@ USERS = {
 # 反馈弹窗延迟（秒），对话完成后等待 N 秒弹出反馈栏
 FEEDBACK_DELAY_SECONDS = 0
 
-FEISHU_APP_SECRET = "bIi2vPfsKlh663TWi4ZHWcV4pnMOUrrr"
+FEISHU_APP_SECRET = os.getenv("FEISHU_APP_SECRET", "")
 FEISHU_DOMAIN = "feishu"
 FEISHU_CONNECTION_MODE = "websocket"
 FEISHU_ALLOW_ALL_USERS = "true"
@@ -103,7 +103,7 @@ FEISHU_ACCEPT_BOT_MESSAGES = "true"
 MYSQL_HOST = os.getenv("MYSQL_HOST", "localhost")
 MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
 MYSQL_USER = os.getenv("MYSQL_USER", "root")
-MYSQL_PASS = os.getenv("MYSQL_PASS", "sy123456")
+MYSQL_PASS = os.getenv("MYSQL_PASS", "")
 MYSQL_DB = os.getenv("MYSQL_DB", "mec_monitor")
 
 # MongoDB 雷达交通数据配置
@@ -117,7 +117,7 @@ EVENT_IMAGE_BASE_URL = os.getenv("EVENT_IMAGE_BASE_URL", "http://172.172.5.6:708
 
 # SSH 密钥路径
 #SSH_KEY_PATH = os.getenv("SSH_KEY_PATH", str(SELF_AGENT_DIR / "id_ed25519"))
-SSH_KEY_PATH = os.getenv("SSH_KEY_PATH", "/home/sy-cs/workspace/mec_agent_project/mec_agent/id_ed25519")
+SSH_KEY_PATH = os.getenv("SSH_KEY_PATH", str(SELF_AGENT_DIR / "id_ed25519"))
 
 # SSH 客户端路径 — Windows 用原生 ssh.exe，Linux 用系统 ssh
 #SSH_CMD_PATH = os.getenv("SSH_CMD", "/mnt/c/Windows/System32/OpenSSH/ssh.exe")
