@@ -279,63 +279,67 @@ def ping_host(host_ip: str, count: int = 2, timeout: int = 3) -> tuple[bool, str
 
 
 def find_physical_user(host_ip: str) -> tuple:
-    if not _quick_port_check(host_ip, 22):
-        logger.warning("物理机 %s:22 端口不可达（已重试2次），跳过所有SSH探测", host_ip)
+    """Find a usable physical-host SSH identity without a brittle banner gate.
+
+    The TCP port is treated as a hint only. The SSH command itself is the
+    authoritative connectivity/authentication test, because some gateways or
+    SSH servers delay their banner.
+    """
+    # Avoid spending ~80s probing every possible account. Respect the config:
+    # by default only the first/root account is tried unless a DB physical user
+    # is explicitly configured.
+    port_open = _quick_port_check(host_ip, 22, timeout=2.0)
+    if not port_open:
+        logger.warning("物理机 %s:22 TCP 探测失败，仍允许容器 10022 直连路径继续工作", host_ip)
         return "", ""
-    if not _check_ssh_banner(host_ip, 22):
-        logger.warning("物理机 %s:22 端口未响应SSH协议（已重试2次），跳过所有SSH探测", host_ip)
-        return "", ""
+
     creds = _get_device_credentials(host_ip)
     db_pm_user = creds.get("pm_username", "")
     db_pm_pass = creds.get("pm_password", "")
     db_dev_pass = creds.get("password", "")
 
+    key_users = []
     if db_pm_user:
-        try:
-            stdout, stderr, code = ssh_exec(host_ip, 22, db_pm_user, "echo 'OK'", exec_timeout=10)
+        key_users.append(db_pm_user)
+    configured_users = [u.strip() for u in PHYSICAL_USERS if u.strip()]
+    if PHYSICAL_SSH_USERS_ENABLED:
+        key_users.extend(configured_users)
+    elif configured_users:
+        key_users.append(configured_users[0])
+
+    seen = set()
+    key_users = [u for u in key_users if not (u in seen or seen.add(u))]
+
+    # 1) Known physical username with configured key.
+    for pm_user in key_users:
+        stdout, stderr, code = ssh_exec(host_ip, 22, pm_user, "echo 'OK'", exec_timeout=6)
+        if code == 0 and stdout.strip() == "OK":
+            logger.info("物理机用户: %s@%s (密钥)", pm_user, host_ip)
+            return pm_user, "key"
+
+    # 2) Known physical username with DB physical password, then the device
+    # password as a compatibility fallback when the physical username is known.
+    if db_pm_user:
+        passwords = [p for p in (db_pm_pass, db_dev_pass) if p]
+        seen_pw = set()
+        for pwd in [p for p in passwords if not (p in seen_pw or seen_pw.add(p))]:
+            stdout, stderr, code = ssh_exec(
+                host_ip, 22, db_pm_user, "echo 'OK'", exec_timeout=6, password=pwd
+            )
             if code == 0 and stdout.strip() == "OK":
-                logger.info("物理机用户: %s@%s (密钥)", db_pm_user, host_ip)
-                return db_pm_user, "key"
-        except Exception:
-            pass
+                logger.info("物理机用户: %s@%s (数据库密码)", db_pm_user, host_ip)
+                return db_pm_user, "password"
 
-        db_pass = db_pm_pass or db_dev_pass
-        if db_pass:
-            try:
-                stdout, stderr, code = ssh_exec(host_ip, 22, db_pm_user, "echo 'OK'", exec_timeout=10, password=db_pass)
-                if code == 0 and stdout.strip() == "OK":
-                    logger.info("物理机用户: %s@%s (数据库密码)", db_pm_user, host_ip)
-                    return db_pm_user, "password"
-            except Exception:
-                pass
-
-    for pm_user in PHYSICAL_USERS:
-        try:
-            stdout, stderr, code = ssh_exec(host_ip, 22, pm_user, "echo 'OK'", exec_timeout=10)
+    # 3) Optional additional physical usernames with the physical password.
+    if db_pm_pass and PHYSICAL_SSH_USERS_ENABLED:
+        for pm_user in key_users:
+            stdout, stderr, code = ssh_exec(
+                host_ip, 22, pm_user, "echo 'OK'", exec_timeout=6, password=db_pm_pass
+            )
             if code == 0 and stdout.strip() == "OK":
-                logger.info("物理机用户: %s@%s (密钥)", pm_user, host_ip)
-                return pm_user, "key"
-        except Exception:
-            pass
+                logger.info("物理机用户: %s@%s (密码)", pm_user, host_ip)
+                return pm_user, "password"
 
-    if db_pm_pass:
-        for pm_user in PHYSICAL_USERS:
-            try:
-                stdout, stderr, code = ssh_exec(host_ip, 22, pm_user, "echo 'OK'", exec_timeout=10, password=db_pm_pass)
-                if code == 0 and stdout.strip() == "OK":
-                    logger.info("物理机用户: %s@%s (密码)", pm_user, host_ip)
-                    return pm_user, "password"
-            except Exception:
-                continue
-
-    for pm_user in PHYSICAL_USERS[1:]:
-        try:
-            stdout, stderr, code = ssh_exec(host_ip, 22, pm_user, "echo 'OK'", exec_timeout=10)
-            if code == 0 and stdout.strip() == "OK":
-                logger.info("物理机用户: %s@%s (密钥)", pm_user, host_ip)
-                return pm_user, "key"
-        except Exception:
-            continue
-
-    logger.warning("物理机 %s 所有登录方式均失败，无法连接", host_ip)
+    logger.warning("物理机 %s 登录探测失败（并不代表容器不可达）", host_ip)
     return "", ""
+\n
