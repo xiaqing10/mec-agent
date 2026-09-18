@@ -86,8 +86,6 @@ def query_mec_abnormal() -> str:
 
 @tool
 def query_mec_device_from_db(ip: str) -> str:
-    # Keep JSON serialization local to the tool call as a runtime guard.
-    import json as _json
     """从MySQL数据库查询MEC设备的完整状态信息，无需SSH连接。
 
     当设备SSH不可达时，数据库记录是了解设备状态的重要途径。
@@ -101,7 +99,7 @@ def query_mec_device_from_db(ip: str) -> str:
     from diagnose_mec import _resolve_device
 
     if not ip:
-        return _json.dumps({"error": "未指定设备IP或设备名"}, ensure_ascii=False)
+        return json.dumps({"error": "未指定设备IP或设备名"}, ensure_ascii=False)
 
     if not re.match(r'^\d+\.\d+\.\d+\.\d+$', ip):
         resolved_ip, _ = _resolve_device(ip)
@@ -109,11 +107,11 @@ def query_mec_device_from_db(ip: str) -> str:
             ip = resolved_ip
     if not re.match(r'^\d+\.\d+\.\d+\.\d+$', ip):
         msg = f"数据库中未找到设备 '{ip}'，请检查设备名是否正确，或直接使用IP地址"
-        return _json.dumps({"error": msg}, ensure_ascii=False)
+        return json.dumps({"error": msg}, ensure_ascii=False)
 
     db_info = get_device_db_info(ip)
     if not db_info or not db_info.get("name"):
-        return _json.dumps({"error": f"数据库中没有设备 {ip} 的记录"}, ensure_ascii=False)
+        return json.dumps({"error": f"数据库中没有设备 {ip} 的记录"}, ensure_ascii=False)
 
     return format_device_db_info(db_info)
 
