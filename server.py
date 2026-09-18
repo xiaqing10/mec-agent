@@ -104,7 +104,7 @@ def _auth_middleware():
                      "/api/v1/login", "/api/v1/logout") or path.startswith("/static/"):
             return await handler(request)
         api_key = request.headers.get("X-API-Key", "")
-        if api_key == API_KEY:
+        if API_KEY and api_key == API_KEY:
             return await handler(request)
         username = _get_username(request)
         if username and username in USERS:
