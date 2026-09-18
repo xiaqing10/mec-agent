@@ -14,7 +14,7 @@ Web UI (webui.py) / API Client
   handlers/ (auth/chat/feedback/memory/repair)
         ↓
   agent.py (LangGraph StateGraph)
-   节点: agent → tools → update_context → feedback → END
+   节点: agent → tools → update_context → finalize_response → feedback → END
    持久化: AsyncSqliteSaver → checkpoints.db
         ↓                    ↓
   tools/ 包 (26个 Tool)    diagnose_mec/ 包 (SSH诊断引擎)
@@ -217,7 +217,9 @@ python3 server.py
 
 ## Agent System Prompt 策略
 
-Agent 不再在 System Prompt 中维护完整工具清单；**实际工具名称、参数和能力以 Tool Schema 为唯一事实来源**。Prompt 只负责路由原则和安全边界，避免工具数量/参数变更后出现提示词过期。
+Agent 的基础 System Prompt 已从 `agent.py` 中移出，默认位于 `prompts/agent_system_prompt.md`。生产环境可通过 `AGENT_SYSTEM_PROMPT_FILE` 指向另一份 UTF-8 Prompt 文件，而不修改 Agent 代码。**实际工具名称、参数和能力仍以 Tool Schema 为唯一事实来源**；Prompt 只负责路由原则和安全边界。
+
+最终响应还有一道代码级守门：若模型最终 AI 消息的 `content` 为空或全空白，系统直接生成固定兜底文本，包含“本轮工具”和“关键错误”，不会再次请求 LLM。因此“工具执行成功但模型没出字”“模型返回空内容”“模型链路异常”都不会留下空回复。
 
 ### 核心策略
 
@@ -270,6 +272,7 @@ Agent 不再在 System Prompt 中维护完整工具清单；**实际工具名称
 export VOLCENGINE_API_KEY="..."
 export BAIDU_API_KEY="..."
 export SELF_AGENT_API_KEY="..."
+export AGENT_SYSTEM_PROMPT_FILE="/path/to/agent_system_prompt.md"   # 可选；默认使用项目内 prompts/agent_system_prompt.md
 export FEISHU_APP_SECRET="..."
 export MYSQL_PASS="..."
 export CHECKPOINT_DB_PATH="/path/to/checkpoints.db"
