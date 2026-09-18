@@ -1082,8 +1082,9 @@ def collect_device_raw_data(host_ip: str, project: str = "", access_info: dict |
                 lines.append(line)
 
     logger.info("📡 步骤6: rostopic检查...")
-    stdout, _, _ = ssh_exec(host_ip, CONTAINER_PORT, CONTAINER_USER,
-        f"{ROS_ENV_CMD} && rostopic list 2>/dev/null", exec_timeout=15)
+    stdout, _, _ = _run_container(
+        f"{ROS_ENV_CMD} && rostopic list 2>/dev/null", exec_timeout=15
+    )
     raw["rostopic_list"] = [t.strip() for t in stdout.strip().split('\n') if t.strip()] if stdout.strip() else []
 
     TOPIC_SUFFIXES = [
@@ -1127,7 +1128,7 @@ def collect_device_raw_data(host_ip: str, project: str = "", access_info: dict |
             raw["topic_rates"][topic] = '\n'.join(topic_output.get(topic, [])) or "(无输出)"
 
     try:
-        si = get_sensor_status(host_ip)
+        si = get_sensor_status(host_ip, project)
         if si.get("total_cameras", 0) > 0 or si.get("total_radars", 0) > 0:
             raw["sensor_status"] = si
     except Exception:
