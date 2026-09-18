@@ -26,7 +26,7 @@ sys.path.insert(0, str(SELF_AGENT_DIR))
 
 from langgraph.graph import StateGraph, END, add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
-from langchain_core.messages import BaseMessage, AIMessage, ToolMessage, HumanMessage
+from langchain_core.messages import BaseMessage, AIMessage, ToolMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from config import AVAILABLE_MODELS
@@ -131,12 +131,6 @@ def _select_agent_tools(route: str):
     return [by_name[n] for n in dict.fromkeys(names) if n in by_name and n != "mec_llm_diagnose_device"]
 
 
-def _get_llm_with_tools(selected_tools):
-    return get_chat_model(
-        with_tools=True, tools=selected_tools, timeout=45, max_tokens=4096
-    )
-
-
 # ──────────────────────────────────────────────
 # State definition
 # ──────────────────────────────────────────────
@@ -239,10 +233,13 @@ def post_tool_router_node(state: AgentState) -> dict:
 
     messages = state.get("messages", [])
     last_tool = next(
-        (m for m in reversed(messages) if isinstance(m, ToolMessage)),
+        (
+            m for m in reversed(messages)
+            if isinstance(m, ToolMessage) and getattr(m, "name", "") == "mec_diagnose_device"
+        ),
         None,
     )
-    if not last_tool or getattr(last_tool, "name", "") != "mec_diagnose_device":
+    if not last_tool:
         return {}
 
     try:
@@ -280,10 +277,8 @@ def post_tool_router_node(state: AgentState) -> dict:
 
     return {
         "messages": [
-            ToolMessage(
-                content=str(output),
-                tool_call_id=f"router-deep-{int(time.time() * 1000)}",
-                name="mec_llm_diagnose_device",
+            SystemMessage(
+                content=f"【确定性深度诊断结果】\n{str(output)}"
             )
         ],
         "deep_analysis_done": True,
@@ -298,7 +293,6 @@ def agent_node(state: AgentState) -> dict:
     messages = state["messages"]
     route_hint = state.get("route_hint", "general")
     selected_tools = _select_agent_tools(route_hint)
-    llm_with_tools = _get_llm_with_tools(selected_tools)
 
     # Keep the system prompt compact. Tool schemas are the source of truth.
     system_prompt = """你是智慧交通/MEC运维智能体。首要原则：**先用工具获得事实，再回答；不要凭空猜设备、项目、状态或根因。**
