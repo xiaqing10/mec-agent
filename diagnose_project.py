@@ -226,9 +226,9 @@ def diagnose_device(diag_type, device_info):
 
     try:
         if diag_type == "container_offline" or diag_type == "physical_offline":
-            result = diagnose_container_offline(ip)
+            result = diagnose_container_offline(ip, project=project)
         elif diag_type == "zero_images":
-            result = diagnose_zero_images(ip)
+            result = diagnose_zero_images(ip, project=project)
         else:
             return {"host": ip, "device_name": device_name, "project": project,
                     "type": diag_type, "diagnosis": {"error": f"未知诊断类型: {diag_type}"}, "recommendations": []}
