@@ -73,7 +73,7 @@ def test_all_python_json_attribute_uses_have_a_json_import():
 def test_webui_repairs_escaped_flattened_tables():
     source = WEBUI.read_text(encoding="utf-8")
     assert "Some model responses escape table pipes" in source
-    assert "s = s.replace(/\\\\\\|/g, '|');" in source
-    assert "s = s.replace(/\\|\\|/g, '|\\n|');" in source
+    assert "tableLike" in source
+    assert "Flattened tables commonly collapse row boundaries" in source
     assert "String.fromCharCode(96)" in source
     assert "__MD_FENCE_" in source
