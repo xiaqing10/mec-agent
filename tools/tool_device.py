@@ -240,8 +240,14 @@ def mec_diagnose_device(ip: str, project: str = "") -> str:
         if db_detail:
             dimensions.append({"name": "数据库记录", "status": "warning", "detail": db_detail})
         from ._diag_cache import cache_diag_data
-        cache_diag_data(ip, {"physical_user": cd.get("_login_user", ""), "login_method": cd.get("_login_method", ""),
-                              "ssh_password": cd.get("_ssh_password", ""), "docker_unavailable": True})
+        cache_diag_data(ip, {
+            "project": effective_project,
+            "device_reachable": True,
+            "physical_ssh": physical_available,
+            "container_ssh": container_available,
+            "access_mode": access.get("access_mode", "none"),
+            "container_unreachable": True,
+        })
         return _build_diag_result(ip, dimensions, problem, project=effective_project)
     elif dev_cont and "不存在" in dev_cont:
         if "不存在" in dev_cont:
@@ -266,8 +272,14 @@ def mec_diagnose_device(ip: str, project: str = "") -> str:
         if db_detail:
             dimensions.append({"name": "数据库记录", "status": "warning", "detail": db_detail})
         from ._diag_cache import cache_diag_data
-        cache_diag_data(ip, {"physical_user": cd.get("_login_user", ""), "login_method": cd.get("_login_method", ""),
-                              "ssh_password": cd.get("_ssh_password", ""), "container_unreachable": True})
+        cache_diag_data(ip, {
+            "project": effective_project,
+            "device_reachable": True,
+            "physical_ssh": physical_available,
+            "container_ssh": container_available,
+            "access_mode": access.get("access_mode", "none"),
+            "container_unreachable": True,
+        })
         return _build_diag_result(ip, dimensions, problem, project=effective_project)
     elif "Docker" in (issue_text or ""):
         problem, detail = "docker_service_down", "Docker服务未运行"
@@ -507,11 +519,11 @@ def mec_diagnose_device(ip: str, project: str = "") -> str:
 
     from ._diag_cache import cache_diag_data
     cache_diag_data(ip, {
-        "physical_user": cd.get("_login_user", ""),
-        "login_method": cd.get("_login_method", ""),
-        "ssh_password": cd.get("_ssh_password", ""),
-        "container_ssh_info": cd.get("_container_ssh_info"),
         "project": effective_project,
+        "device_reachable": True,
+        "physical_ssh": physical_available,
+        "container_ssh": container_available,
+        "access_mode": access.get("access_mode", "none"),
         "physical_uptime": pu,
         "container_status": cs,
         "raw_data": {
