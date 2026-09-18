@@ -1,6 +1,9 @@
 import json
+import logging
 
 from langchain_core.tools import tool
+
+logger = logging.getLogger(__name__)
 
 
 @tool
