@@ -194,8 +194,9 @@ def diagnose_zero_images(host_ip: str, container_ssh_info=None, progress_cb=None
 
     if not container_ssh_info:
         stdout, stderr, code = ssh_exec(host_ip, CONTAINER_PORT, CONTAINER_USER, "echo 'OK'", exec_timeout=10)
-
-        if code != 0 or "OK" not in stdout:
+        if code == 0 and "OK" in stdout:
+            result["diagnosis"]["container_access"] = "direct_ssh"
+        else:
             logger.info("   容器SSH公钥直连失败，尝试密码登录...")
             creds = _get_device_credentials(host_ip)
             dev_password = creds.get("password", "")
@@ -205,6 +206,7 @@ def diagnose_zero_images(host_ip: str, container_ssh_info=None, progress_cb=None
                     exec_timeout=10, password=dev_password
                 )
         if code == 0 and "OK" in stdout:
+            result["diagnosis"]["container_access"] = "direct_ssh"
             container_ssh_password = dev_password if 'dev_password' in dir() and dev_password else ""
             result["diagnosis"]["_ssh_password"] = container_ssh_password
 
@@ -230,6 +232,7 @@ def diagnose_zero_images(host_ip: str, container_ssh_info=None, progress_cb=None
             if exec_test_code == 0 and "OK" in exec_test_stdout:
                 logger.info("  ✅ 物理机docker exec可用，通过docker exec诊断")
                 use_docker_exec = True
+                result["diagnosis"]["container_access"] = "docker_exec"
                 result["diagnosis"]["container_ssh_fallback"] = "docker exec"
                 ssh_reason_cmd = (
                     "echo '===SSHD_STATUS===' && "
@@ -256,12 +259,14 @@ def diagnose_zero_images(host_ip: str, container_ssh_info=None, progress_cb=None
             logger.warning("  ❌ 物理机无法连接")
 
         if not use_docker_exec:
+            result["diagnosis"]["container_access"] = "unavailable"
             result["diagnosis"]["issue"] = f"容器SSH无法连接: {(stderr or stdout).strip()[:200]}"
             logger.warning("❌ 容器无法连接")
             return _add_sensor_status(result, host_ip)
 
     if not use_docker_exec:
         logger.info("✅ 容器连接正常")
+        result["diagnosis"].setdefault("container_access", "direct_ssh")
         creds = _get_device_credentials(host_ip)
         direct_password = creds.get("password", "")
         result["_exec_ctx"] = {"method": "direct", "ssh_password": direct_password}
@@ -272,6 +277,7 @@ def diagnose_zero_images(host_ip: str, container_ssh_info=None, progress_cb=None
     logger.info("📦 一次SSH采集容器初始数据...")
 
     if use_docker_exec:
+        result["diagnosis"]["container_access"] = "docker_exec"
         docker_cmds = (
             "echo '===SUPERVISOR===' && supervisorctl status 2>&1; "
             "echo '===ROSCORE===' && ps -ef | grep roscore | grep -v grep || echo 'ROSCORE_NOT_RUNNING'; "
