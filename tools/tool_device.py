@@ -611,18 +611,15 @@ def mec_device_info(ip: str, info_type: str = "disk") -> str:
 
 @tool
 def mec_llm_diagnose_device(ip: str, project: str = "") -> str:
-    """对单台MEC设备进行LLM深度分析诊断。
-    先SSH采集设备的全部原始数据，然后调用LLM进行根因分析、
-    影响范围评估、修复建议和预防措施。
+    """对单台MEC设备进行LLM深度分析。
 
-    Args:
-        ip: 设备IP地址或设备名
-        project: 设备所属项目名（可选）
+    本工具只接收基础诊断已确认需要深度分析的场景；它复用统一设备访问路径，
+    并通过统一 LLM Gateway 调用当前会话选择的模型。
     """
     from diagnose_mec import collect_device_raw_data, _resolve_device
     from project_history import save_diagnosis, load_project_records
     from query_sensor_status import get_device_db_info, format_device_db_info
-    from ._diag_cache import get_diag_cache
+    from llm_gateway import invoke_text
 
     if not ip:
         return json.dumps({"error": "未指定设备IP或设备名"}, ensure_ascii=False)
@@ -632,107 +629,159 @@ def mec_llm_diagnose_device(ip: str, project: str = "") -> str:
         resolved_ip, device_info = _resolve_device(ip, project=project or None)
         if device_info and device_info.get("_ambiguous"):
             projects = "、".join(device_info.get("projects") or []) or "多个项目"
-            return f"设备名 '{ip}' 匹配到 {device_info.get('matches', 0)} 台设备（{projects}），未自动选择。请指定项目或IP。"
+            return json.dumps({
+                "schema_version": "1.0",
+                "type": "deep_diagnosis_result",
+                "status": "warning",
+                "stage": "deep",
+                "entity": {"ip": ip, "project": project},
+                "ip": ip,
+                "project": project,
+                "root_cause": "ambiguous_device",
+                "next_action": "ask_user",
+                "error": f"设备名 '{ip}' 匹配到 {device_info.get('matches', 0)} 台设备（{projects}），未自动选择。",
+                "analysis": "",
+            }, ensure_ascii=False)
         if resolved_ip != ip:
             ip = resolved_ip
+
     if not re.match(r'^\d+\.\d+\.\d+\.\d+$', ip):
         msg = f"数据库中未找到设备 '{ip}'"
         if project:
             msg += f"（项目：{project}）"
-        msg += "，请检查设备名是否正确，或直接使用IP地址"
-        return json.dumps({"error": msg}, ensure_ascii=False)
+        return json.dumps({
+            "schema_version": "1.0",
+            "type": "deep_diagnosis_result",
+            "status": "warning",
+            "stage": "deep",
+            "entity": {"ip": ip, "project": project},
+            "ip": ip,
+            "project": project,
+            "root_cause": "device_not_found",
+            "next_action": "ask_user",
+            "error": msg,
+            "analysis": "",
+        }, ensure_ascii=False)
 
-    cached = get_diag_cache(ip)
-    if cached and cached.get("raw_data"):
-        raw_data = cached["raw_data"]
-        raw_result = {"host": ip, "timestamp": datetime.now().isoformat(), "raw_data": raw_data}
-    else:
-        raw_result = collect_device_raw_data(ip)
-        raw_data = raw_result.get("raw_data", {})
+    raw_result = collect_device_raw_data(ip, project=project)
+    raw_data = raw_result.get("raw_data", {})
+    reachable = bool(raw_data.get("device_reachable"))
 
-    physical_ssh = raw_data.get("physical_ssh", "")
-    if "失败" in physical_ssh or "不可达" in physical_ssh or "超時" in physical_ssh or "连接失败" in physical_ssh:
+    if not reachable:
         db_info = get_device_db_info(ip)
         db_detail = format_device_db_info(db_info)
-        msg = f"⚠️ 设备 {ip} 物理机不可达（{physical_ssh}），无法SSH采集数据。\n\n可能原因：\n1. 设备关机或断网\n2. 网络路由不通\n3. SSH服务异常或认证配置问题\n\n建议：先确认网络可达性（ping {ip}），再尝试诊断。"
+        result = {
+            "schema_version": "1.0",
+            "type": "deep_diagnosis_result",
+            "status": "warning",
+            "stage": "deep",
+            "entity": {"ip": ip, "project": project},
+            "ip": ip,
+            "project": project,
+            "root_cause": "device_unreachable",
+            "next_action": "verify_access",
+            "analysis": "",
+            "error": raw_data.get("error", "设备没有可用访问路径"),
+            "evidence": [
+                {"name": "physical_ssh", "value": raw_data.get("physical_ssh", "不可用")},
+                {"name": "container_ssh", "value": raw_data.get("container_ssh", "不可用")},
+                {"name": "access_mode", "value": raw_data.get("access_mode", "none")},
+            ],
+        }
         if db_detail:
-            msg += f"\n\n--- 数据库记录 ---\n{db_detail}"
-        return msg
+            result["evidence"].append({"name": "database", "value": db_detail[:1000]})
+        return json.dumps(result, ensure_ascii=False)
 
-    device_project = device_info.get("project", "") if device_info else ""
-    device_name = device_info.get("name", "") if device_info else ""
+    device_project = (device_info or {}).get("project", "") or project
+    device_name = (device_info or {}).get("name", "")
+    hist_text = ""
     if device_info:
         save_diagnosis(device_project, device_name, ip, raw_result)
         hist = load_project_records(device_project)
         if hist and device_name in hist.get("devices", {}):
-            dev_recs = hist["devices"][device_name]["records"]
-            dev_hist = "\n".join(f"{r['timestamp']}: {r.get('issue','') or r.get('error','正常')}" for r in dev_recs[-10:])
-        else:
-            dev_hist = ""
-    else:
-        dev_hist = ""
+            records = hist["devices"][device_name].get("records", [])
+            hist_text = "\n".join(
+                f"{r.get('timestamp', '')}: {r.get('issue', '') or r.get('error', '正常')}"
+                for r in records[-10:]
+            )
 
-    import urllib.request
-    import urllib.error
-    from config import AVAILABLE_MODELS
-    _default_cfg = next(iter(AVAILABLE_MODELS.values()))
-    LLM_API_KEY = _default_cfg["api_key"]
-    LLM_BASE_URL = _default_cfg["base_url"]
-    LLM_MODEL = next(iter(AVAILABLE_MODELS))
-
-    raw_data_text = ""
+    # Never send credentials or internal access metadata to the LLM.
+    safe_items = {}
     for key, value in raw_data.items():
-        if isinstance(value, (dict, list)):
-            raw_data_text += f"## {key}\n{json.dumps(value, ensure_ascii=False, indent=2)}\n\n"
-        else:
-            raw_data_text += f"## {key}\n{value}\n\n"
+        key_lower = key.lower()
+        if key.startswith("_") or any(token in key_lower for token in ("password", "credential", "secret", "token")):
+            continue
+        if key in {"physical_user"}:
+            continue
+        safe_items[key] = value
 
-    history_section = f"\n该设备历史诊断记录:\n{dev_hist}\n" if dev_hist else ""
+    raw_data_text = "\n".join(
+        f"## {key}\n{json.dumps(value, ensure_ascii=False, indent=2) if isinstance(value, (dict, list)) else value}"
+        for key, value in safe_items.items()
+    )
 
-    prompt = f"""你是一位资深MEC边缘计算设备运维专家。请根据以下设备原始诊断数据进行深度分析。
+    history_section = f"\n该设备历史诊断记录:\n{hist_text}\n" if hist_text else ""
+    prompt = f"""设备IP: {ip}
+项目: {device_project}
+访问路径: {raw_data.get("access_mode", "unknown")}
 
-设备IP: {ip}
-采集时间: {raw_result.get("timestamp", "")}
-原始数据:
+以下是基础诊断后的结构化采集数据：
 {raw_data_text}
 {history_section}
-请分析：
-1. 根因分析：根据原始数据判断问题根因（不要假设，只基于数据说话）
-   - 检查supervisorctl status中每个进程的状态（特别注意FATAL/STOPPED/STARTING/BACKOFF）
-   - 检查日志中的error/fatal/failed等关键词，判断是驱动问题、ROS问题还是进程本身问题
-   - 检查rostopic频率，哪些topic有数据、哪些没有
-   - 物理机/容器的uptime和状态是否正常
-2. 影响范围：会影响到哪些业务（结合今日图片数和传感器状态）
-3. 修复建议：具体的修复步骤（按优先级排列）
-4. 预防措施：如何避免类似问题
 
-请用中文回答，尽量详细专业。"""
+请基于证据进行深度根因分析。只讨论数据支持的结论，并区分：
+1. 根因；
+2. 当前症状；
+3. 受影响的业务；
+4. 建议的处理顺序；
+5. 仍缺失的证据。
 
-    url = f"{LLM_BASE_URL}/chat/completions"
-    payload = {
-        "model": LLM_MODEL,
-        "messages": [
-            {"role": "system", "content": "你是一位资深MEC边缘计算设备运维专家，精通Linux系统、Docker容器、ROS系统和边缘计算设备故障排查。请基于诊断数据给出专业的分析。"},
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.3,
-        "max_tokens": 4096
-    }
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Authorization": f"Bearer {LLM_API_KEY}", "Content-Type": "application/json"}
-    )
+不要把“物理机SSH不可用”自动等同于“设备离线”；如果容器可达，应以容器证据继续分析。
+不要输出密码、密钥或内部认证信息。
+请用中文、简洁而专业地回答。"""
+
     try:
-        resp = urllib.request.urlopen(req, timeout=45)
-        data = json.loads(resp.read().decode())
-        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-        if content:
-            return f"## {ip} LLM深度分析结果\n\n{content}"
-        error_info = data.get("error", {})
-        return f"LLM返回空内容: {json.dumps(error_info, ensure_ascii=False) if error_info else '未知'}"
-    except urllib.error.HTTPError as e:
-        body = e.read().decode(errors='replace')[:500]
-        return f"LLM API HTTP {e.code}: {body}"
-    except Exception as e:
-        return f"LLM API请求异常: {e}"
+        content = invoke_text(
+            "你是一位资深MEC边缘计算运维专家，必须严格基于提供的诊断数据分析，不得编造事实。",
+            prompt,
+            timeout=45,
+            max_tokens=4096,
+            retry=1,
+        )
+        status = "normal" if content else "warning"
+        result = {
+            "schema_version": "1.0",
+            "type": "deep_diagnosis_result",
+            "status": status,
+            "stage": "deep",
+            "entity": {"ip": ip, "project": device_project},
+            "ip": ip,
+            "project": device_project,
+            "root_cause": "llm_analysis",
+            "root_cause_confidence": None,
+            "next_action": "report",
+            "deep_analysis_recommended": False,
+            "analysis": content,
+            "evidence": [],
+            "symptoms": [],
+            "impact": [],
+            "recommendations": [],
+        }
+        return json.dumps(result, ensure_ascii=False)
+    except Exception as exc:
+        logger.exception("LLM深度诊断失败: %s", exc)
+        return json.dumps({
+            "schema_version": "1.0",
+            "type": "deep_diagnosis_result",
+            "status": "warning",
+            "stage": "deep",
+            "entity": {"ip": ip, "project": device_project},
+            "ip": ip,
+            "project": device_project,
+            "root_cause": "deep_analysis_failed",
+            "next_action": "report",
+            "deep_analysis_recommended": False,
+            "analysis": "",
+            "error": str(exc)[:500],
+        }, ensure_ascii=False)
+
