@@ -116,11 +116,26 @@ def _auth_middleware():
     return auth_middleware
 
 
+async def _close_agent_resources(app):
+    from handlers import chat as chat_handler
+    ctx = getattr(chat_handler, "_agent_checkpointer_ctx", None)
+    if ctx:
+        try:
+            _, manager = ctx
+            await manager.__aexit__(None, None, None)
+        except Exception:
+            logger.exception("关闭 LangGraph checkpointer 失败")
+        finally:
+            chat_handler._agent_checkpointer_ctx = None
+            chat_handler._agent = None
+
+
 def create_app():
     if not AIOHTTP_AVAILABLE:
         print("❌ 需要安装 aiohttp: pip install aiohttp")
         sys.exit(1)
     app = web.Application(middlewares=[_auth_middleware()])
+    app.on_cleanup.append(_close_agent_resources)
     app.router.add_get("/api/v1/health", handle_health)
     app.router.add_get("/", handle_webui)
     app.router.add_get("/webui", handle_webui)
