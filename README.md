@@ -22,7 +22,7 @@ Web UI (webui.py) / API Client
    持久化: AsyncSqliteSaver → checkpoints.db
    recursion_limit: 顶层 invocation 配置
         ↓                    ↓
-  tools/ 包 (26个 Tool)    diagnose_mec/ 包 (SSH诊断引擎)
+  tools/ 包 (27个 Tool)    diagnose_mec/ 包 (SSH诊断引擎)
    ├── tool_device          ├── diagnostics.py
    ├── tool_project         ├── parsers.py
    ├── tool_db (MySQL)      └── ssh.py
