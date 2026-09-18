@@ -153,9 +153,9 @@ class AgentState(TypedDict):
     conversation_intent: Optional[str]
     pending_feedback: bool
     auto_correctness: Optional[int]
-    request_project: str
-    request_ip: str
-    request_model: str
+    request_project: Optional[str]
+    request_ip: Optional[str]
+    request_model: Optional[str]
     route_hint: Optional[str]
     deep_analysis_done: bool
 
@@ -327,12 +327,12 @@ async def agent_node(state: AgentState) -> dict:
             if mem_parts:
                 system_prompt += "\n\n## 关于当前用户\n" + "\n\n".join(mem_parts)
 
-    # Insert system prompt as first message if not already there
-    # 主动裁剪：保留最近 N 条消息，防止 token 溢出或内容安全过滤
+    # Context-window trimming is a model-input view only. Never mutate the persisted
+    # LangGraph message history: checkpoint state remains complete across turns.
     MAX_HISTORY = 20
     if len(messages) > MAX_HISTORY:
-        logger.info("消息数=%d 超过上限%d，裁剪到最后%d条", len(messages), MAX_HISTORY, MAX_HISTORY)
-        messages = messages[-MAX_HISTORY:]
+        logger.info("本轮模型输入裁剪: %d 条 → 最近 %d 条（不修改 checkpoint）", len(messages), MAX_HISTORY)
+        messages = list(messages[-MAX_HISTORY:])
     all_messages = [("system", system_prompt)] + messages
 
     _t0 = time.time()
