@@ -712,9 +712,6 @@ async function sendMessage() {
   input.value = '';
   input.style.height = 'auto';
   var btn = document.getElementById('sendBtn');
-  if (window._streamController) return;
-  btn.disabled = true;
-  var requestSessionId = currentSessionId;
 
   var stopKeywords = ["/stop", "停止", "取消", "终止", "停下"];
   var isStop = stopKeywords.some(function(kw) { return msg.indexOf(kw) !== -1; });
@@ -722,7 +719,12 @@ async function sendMessage() {
     window._stoppedByUser = true;
     window._streamController.abort();
     window._streamController = null;
+    btn.disabled = false;
+    return;
   }
+  if (window._streamController) return;
+  btn.disabled = true;
+  var requestSessionId = currentSessionId;
 
   var session = getCurrentSession();
   if (!session) { newSession(); session = getCurrentSession(); }
