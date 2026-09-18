@@ -325,16 +325,6 @@ def diagnose_project(project_name):
         project_results.append(result)
         if result.get("deep_analysis"):
             total_need_llm += 1
-    container_results = [
-        r for r in project_results
-        if r.get("status") in ("error", "warning")
-    ]
-    zero_results = [
-        r for r in project_results
-        if r.get("root_cause") in ("zero_images", "topic_all_zero", "topic_partial_zero")
-    ]
-    recovered_results = [r for r in project_results if r.get("status") == "normal"]
-
     dingtalk_msg = build_dingtalk_message(project_results, project_name)
 
     result_summary["success"] = True
