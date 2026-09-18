@@ -11,3 +11,9 @@ run.sh
 *.db-shm
 *.db-wal
 *.db
+
+# SSH private keys / credentials
+id_ed25519
+id_ed25519.*
+*.pem
+*.key
