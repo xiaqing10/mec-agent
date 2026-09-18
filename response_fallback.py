@@ -61,6 +61,14 @@ def _extract_error_strings(payload: Any) -> list[str]:
                 value = payload.get(key)
                 if isinstance(value, str) and value.strip():
                     errors.append(value.strip())
+            dimensions = payload.get("dimensions")
+            if isinstance(dimensions, list):
+                abnormal = [
+                    _text(d.get("name", "")) for d in dimensions
+                    if isinstance(d, dict) and d.get("status") == "error" and d.get("name")
+                ]
+                if abnormal:
+                    errors.append("异常维度: " + "、".join(abnormal))
         nested = payload.get("deep_analysis")
         if nested:
             errors.extend(_extract_error_strings(nested))
