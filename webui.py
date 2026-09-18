@@ -583,6 +583,10 @@ function repairFlattenedMarkdown(text) {
   // Restore headings, including headings that arrived without a space after '#'.
   s = s.replace(/([^\n])\s*(#{2,6})(?!#)\s*/g, '$1\n\n$2 ');
   s = s.replace(/(^|\n)(#{2,6})(?!#)([^ \n#])/g, '$1$2 $3');
+  // Split common section labels that were glued onto a heading by flattening.
+  s = s.replace(/(^|\n)(#{2,6} [^\n]+?)(\*\*(?:结论|分析|建议)\**[：:])/g, '$1$2\n\n$3');
+  // A heading followed by '-' is commonly a flattened bullet list.
+  s = s.replace(/(^|\n)(#{2,6} [^-\n]+)-(?=\*\*|\S)/g, '$1$2\n\n- ');
 
   // Restore common list markers glued to the previous sentence/row.
   s = s.replace(/([^\n])\s+([-*]\s+|\d+[.)]\s+)/g, '$1\n$2');
