@@ -712,8 +712,23 @@ def mec_llm_diagnose_device(ip: str, project: str = "") -> str:
             "analysis": "",
         }, ensure_ascii=False)
 
-    raw_result = collect_device_raw_data(ip, project=project)
-    raw_data = raw_result.get("raw_data", {})
+    # Reuse the basic diagnosis cache when it is still fresh; otherwise collect once.
+    from ._diag_cache import get_diag_cache
+    cached = get_diag_cache(ip)
+    if cached and cached.get("raw_data"):
+        raw_data = dict(cached.get("raw_data", {}))
+        raw_data["device_reachable"] = not bool(cached.get("unreachable"))
+        raw_data.setdefault("access_mode", "cached")
+        raw_data.setdefault("physical_ssh", "已由基础诊断确认")
+        raw_data.setdefault("container_ssh", "已由基础诊断确认")
+        raw_result = {
+            "host": ip,
+            "timestamp": datetime.now().isoformat(),
+            "raw_data": raw_data,
+        }
+    else:
+        raw_result = collect_device_raw_data(ip, project=project)
+        raw_data = raw_result.get("raw_data", {})
     reachable = bool(raw_data.get("device_reachable"))
 
     if not reachable:
