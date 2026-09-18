@@ -368,7 +368,29 @@ def mec_diagnose_device(ip: str, project: str = "") -> str:
 
     error_dims = [d for d in dimensions if d["status"] == "error"]
     if error_dims:
-        root_cause = error_dims[0].get("problem", "unknown")
+        # Prefer upstream causes over downstream symptoms. The previous
+        # implementation simply selected error_dims[0], which made e.g.
+        # zero-images hide a preceding process/container failure.
+        cause_priority = {
+            "ssh_unreachable": 100,
+            "docker_service_down": 90,
+            "dev_container_missing": 85,
+            "dev_container_stopped": 85,
+            "container_exec_failed": 80,
+            "container_ssh_down": 75,
+            "gpu_driver_error": 70,
+            "process_fatal": 65,
+            "supervisor_error": 60,
+            "roscore_down": 55,
+            "process_error": 50,
+            "ros_master_error": 45,
+            "topic_all_zero": 30,
+            "topic_partial_zero": 25,
+            "zero_images": 20,
+            "log_error_only": 10,
+        }
+        root_dim = max(error_dims, key=lambda d: cause_priority.get(d.get("problem", ""), 1))
+        root_cause = root_dim.get("problem", "unknown")
         summary = "异常 - " + "; ".join(f"{d['name']}: {d['detail']}" for d in error_dims)
     elif has_warning:
         warn_dims = [d for d in dimensions if d["status"] == "warning"]
