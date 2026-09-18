@@ -117,7 +117,8 @@ def _auth_middleware():
 
 
 async def _close_agent_resources(app):
-    from handlers import chat as chat_handler
+    from importlib import import_module
+    chat_handler = import_module("handlers.chat")
     ctx = getattr(chat_handler, "_agent_checkpointer_ctx", None)
     if ctx:
         try:
