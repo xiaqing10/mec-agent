@@ -127,7 +127,7 @@ def feishu_llm_analyze_logs(project: str = "") -> str:
             prompt,
             timeout=45,
             max_tokens=4096,
-            retry=1,
+            retry=0,
         )
         return json.dumps({
             "schema_version": "1.0",
