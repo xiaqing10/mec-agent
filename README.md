@@ -277,3 +277,11 @@ export REPAIR_SIGNING_KEY="..."
 ```
 
 LangGraph 当前使用 `AsyncSqliteSaver` 持久化会话状态；SQLite checkpoint 需要 `aiosqlite`，项目依赖已包含。当前主 Agent 只把深度诊断工具留给确定性结果 Router，不让普通 LLM 回合自行调用深度分析。
+
+### 诊断统一管线
+
+单设备与项目级诊断现在共享同一条执行链：
+
+`候选设备发现 → mec_diagnose_device → Structured Result → diagnosis_router → 可选 mec_llm_diagnose_device → LLM总结`
+
+项目级诊断仅负责从数据库/飞书报告发现候选设备并去重，不再针对“物理离线 / 容器离线 / 图片为0”维护独立的诊断规则或独立的 LLM 判定规则。
