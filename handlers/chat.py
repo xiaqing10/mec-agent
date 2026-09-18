@@ -540,6 +540,25 @@ async def handle_raw_diagnose(request):
         result = await asyncio.to_thread(tool.invoke, params)
     except asyncio.CancelledError:
         raise
+    if func_name == "mec_repair_device":
+        try:
+            repair_data = json.loads(result) if isinstance(result, str) else result
+            if isinstance(repair_data, dict) and repair_data.get("status") == "pending_confirmation":
+                from repair_authorization import issue_repair_grant
+                session_id = body.get("session_id", "raw")
+                user_id = _get_username(request) or session_id
+                grant = issue_repair_grant(
+                    user_id=user_id,
+                    session_id=session_id,
+                    ip=repair_data.get("device_ip", ""),
+                    action=repair_data.get("action", ""),
+                    target=repair_data.get("target", ""),
+                )
+                repair_data.update(grant)
+                result = json.dumps(repair_data, ensure_ascii=False)
+        except (TypeError, json.JSONDecodeError) as exc:
+            logger.warning("Raw repair grant issuance failed: %s", exc)
+
     if is_raw:
         return web.json_response({"success": True, "action": action, "data": {"result": result}})
     try:
