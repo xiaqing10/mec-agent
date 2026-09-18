@@ -28,7 +28,7 @@ def _add_sensor_status(result: dict, host_ip: str, project: str = ""):
     return result
 
 
-def diagnose_container_offline(host_ip: str, progress_cb=None) -> dict:
+def diagnose_container_offline(host_ip: str, progress_cb=None, project: str = "") -> dict:
     logger.info("=" * 70)
     logger.info("🔍 诊断：物理机在线但容器不可连 - %s", host_ip)
     logger.info("=" * 70)
@@ -147,7 +147,7 @@ def diagnose_container_offline(host_ip: str, progress_cb=None) -> dict:
     if container_created:
         result["diagnosis"]["container_started"] = container_created
 
-    return _add_sensor_status(result, host_ip)
+    return _add_sensor_status(result, host_ip, project)
 
 
 def diagnose_zero_images(host_ip: str, container_ssh_info=None, progress_cb=None, project: str = "") -> dict:
