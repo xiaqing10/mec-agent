@@ -59,80 +59,115 @@ def mec_diagnose_device(ip: str, project: str = "") -> str:
     dimensions = []
     fallback_img = None
 
-    cont = diagnose_container_offline(
-        ip, progress_cb=get_diag_progress_callback(), project=effective_project
-    )
-    cd = cont.get("diagnosis", {})
+    # 一个请求只解析一次访问路径，后续诊断全部复用该结果。
+    from diagnose_mec.ssh import resolve_device_access
+    access = resolve_device_access(ip)
+    physical_available = bool(access.get("physical_ssh"))
+    container_available = bool(access.get("container_ssh") or access.get("docker_exec"))
+
+    if not access.get("device_reachable"):
+        detail = access.get("error", "设备没有可用访问路径")
+        dimensions.append({
+            "name": "可达性", "status": "error",
+            "detail": detail, "problem": "device_unreachable",
+        })
+        dimensions.append({
+            "name": "物理机SSH", "status": "error",
+            "detail": "不可用", "problem": "physical_ssh_unavailable",
+        })
+        dimensions.append({
+            "name": "容器访问", "status": "error",
+            "detail": "10022与docker exec均不可用",
+            "problem": "container_unreachable",
+        })
+        db_info = get_device_db_info(ip)
+        db_detail = format_device_db_info(db_info)
+        if db_detail:
+            dimensions.append({"name": "数据库记录", "status": "warning", "detail": db_detail})
+        from ._diag_cache import cache_diag_data
+        cache_diag_data(ip, {
+            "project": effective_project,
+            "unreachable": True,
+            "device_reachable": False,
+            "physical_ssh": False,
+            "container_ssh": False,
+            "access_mode": "none",
+        })
+        return _build_diag_result(
+            ip, dimensions, "device_unreachable",
+            project=effective_project,
+            access={
+                "device_reachable": False,
+                "physical_ssh": False,
+                "container_ssh": False,
+                "access_mode": "none",
+            },
+        )
+
+    # 物理机可达：使用现有物理机/Docker诊断链。
+    if physical_available:
+        cont = diagnose_container_offline(
+            ip, progress_cb=get_diag_progress_callback(), project=effective_project
+        )
+        cd = cont.get("diagnosis", {})
+    else:
+        # 物理机不可达但容器可达：直接进入容器诊断，绝不把物理SSH故障当成设备离线。
+        if access.get("docker_exec"):
+            container_ssh_info = {
+                "method": "docker_exec",
+                "login_user": access.get("physical_user", ""),
+                "ssh_password": access.get("ssh_password", ""),
+            }
+        elif access.get("container_password"):
+            container_ssh_info = {
+                "method": "direct_password",
+                "password": access.get("container_password", ""),
+            }
+        else:
+            container_ssh_info = {"method": "direct_key"}
+
+        fallback_img = diagnose_zero_images(
+            ip,
+            container_ssh_info=container_ssh_info,
+            progress_cb=get_diag_progress_callback(),
+            project=effective_project,
+        )
+        cd = {}
 
     ce = cd.get("error", "")
+    if ce and physical_available:
+        # 这里只处理物理机自身诊断失败；真正的设备不可达已在统一访问解析阶段决定。
+        dimensions.append({
+            "name": "物理机", "status": "error",
+            "detail": ce, "problem": "physical_diagnostic_error",
+        })
+        _notify_progress("物理机", "error", ce[:100])
 
-    if ce:
-        _notify_progress("物理机", "warning", "物理机SSH未登录成功，尝试容器10022端口直连...")
-        fallback_img = diagnose_zero_images(
-            ip, container_ssh_info=None,
-            progress_cb=get_diag_progress_callback(),
-            project=effective_project
-        )
-        fallback_diag = fallback_img.get("diagnosis", {})
-        container_access = fallback_diag.get("container_access", "unavailable")
+    disk_root = cd.get("disk_root", "") if physical_available else ""
+    disk_data = cd.get("disk_data", "") if physical_available else ""
+    pu = cd.get("physical_uptime", "未知") if physical_available else ""
 
-        if container_access not in ("direct_ssh", "docker_exec"):
-            _notify_progress("物理机", "error", ce[:80])
-            dimensions.append({
-                "name": "物理机", "status": "error", "detail": ce,
-                "problem": "ssh_unreachable"
-            })
-            for dim_name in ["容器", "进程", "主题+日志", "今日事件数", "传感器"]:
-                dimensions.append({
-                    "name": dim_name, "status": "skip",
-                    "detail": "物理机和容器SSH均未建立连接"
-                })
-            db_info = get_device_db_info(ip)
-            db_detail = format_device_db_info(db_info)
-            if db_detail:
-                dimensions.append({"name": "数据库记录", "status": "warning", "detail": db_detail})
-            if "Permission denied" in ce or "公钥" in ce:
-                dimensions.append({
-                    "name": "登录建议", "status": "warning",
-                    "detail": "物理机SSH认证失败，但仍已尝试容器直连；可检查物理机SSH账号/密钥配置"
-                })
-            elif "超时" in ce or "Timeout" in ce.lower():
-                dimensions.append({
-                    "name": "网络建议", "status": "warning",
-                    "detail": "物理机SSH超时，且容器直连也未建立；建议检查网络、端口和防火墙"
-                })
-            from ._diag_cache import cache_diag_data
-            cache_diag_data(ip, {
-                "physical_user": "", "login_method": "",
-                "ssh_password": "", "unreachable": True
-            })
-            return _build_diag_result(ip, dimensions, "physical_unreachable", project=effective_project, access={"device_reachable": True, "physical_ssh": False, "container_ssh": True, "access_mode": "direct_container"})
-
-        _notify_progress("物理机", "warning", "物理机SSH不可用，但容器SSH可直接访问，继续诊断")
+    if physical_available:
+        disk_detail_parts = [f"在线，运行 {pu}"]
+        if disk_root:
+            disk_detail_parts.append(f"/: {disk_root}")
+        if disk_data:
+            disk_detail_parts.append(f"/data: {disk_data}")
+        physical_detail = " | ".join(disk_detail_parts)
+        if not any(d.get("name") == "物理机" for d in dimensions):
+            dimensions.append({"name": "物理机", "status": "ok", "detail": physical_detail})
+            _notify_progress("物理机", "ok", physical_detail)
+    else:
+        physical_detail = "物理机SSH不可用，但设备/容器访问正常；不判定设备离线"
         dimensions.append({
             "name": "物理机", "status": "warning",
-            "detail": f"{ce}；但容器SSH（10022）可直接连接",
-            "problem": "physical_ssh_unavailable"
+            "detail": physical_detail, "problem": "physical_ssh_unavailable",
         })
+        _notify_progress("物理机", "warning", physical_detail)
         dimensions.append({
-            "name": "容器", "status": "ok",
-            "detail": "容器SSH（10022）直连成功，已绕过物理机SSH继续诊断"
+            "name": "容器访问", "status": "ok",
+            "detail": f"访问方式: {access.get('access_mode', 'container')}",
         })
-        cd = {}
-        pu = "物理机SSH不可用"
-        disk_root = ""
-        disk_data = ""
-    else:
-        pu = cd.get("physical_uptime", "未知")
-    disk_root = cd.get("disk_root", "")
-    disk_data = cd.get("disk_data", "")
-    disk_detail_parts = [f"在线，运行 {pu}"]
-    if disk_root:
-        disk_detail_parts.append(f"/: {disk_root}")
-    if disk_data:
-        disk_detail_parts.append(f"/data: {disk_data}")
-    _notify_progress("物理机", "ok", " | ".join(disk_detail_parts))
-    dimensions.append({"name": "物理机", "status": "ok", "detail": " | ".join(disk_detail_parts)})
 
     # 容器维度：docker ps 状态 + 容器SSH连通性
     cs = cd.get("container_status", "")
@@ -168,9 +203,11 @@ def mec_diagnose_device(ip: str, project: str = "") -> str:
             dimensions.append({"name": "数据库记录", "status": "warning", "detail": db_detail})
         from ._diag_cache import cache_diag_data
         cache_diag_data(ip, {
-            "physical_user": cd.get("_login_user", ""),
-            "login_method": cd.get("_login_method", ""),
-            "ssh_password": cd.get("_ssh_password", ""),
+            "project": effective_project,
+            "device_reachable": True,
+            "physical_ssh": physical_available,
+            "container_ssh": container_available,
+            "access_mode": access.get("access_mode", "none"),
             "container_unreachable": True,
         })
         return _build_diag_result(ip, dimensions, problem, project=effective_project)
