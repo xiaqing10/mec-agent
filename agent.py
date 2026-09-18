@@ -230,11 +230,7 @@ def route_request_node(state: AgentState) -> dict:
 
 
 async def post_tool_router_node(state: AgentState) -> dict:
-    """Use the structured diagnosis result to deterministically decide on deep analysis."""
-    model_id = state.get("request_model") or ""
-    if model_id:
-        from llm_gateway import switch_model
-        switch_model(model_id)
+    """Use the single shared diagnosis Result Router."""
     if state.get("deep_analysis_done"):
         return {}
 
@@ -249,48 +245,29 @@ async def post_tool_router_node(state: AgentState) -> dict:
     if not last_tool:
         return {}
 
-    try:
-        result = json.loads(last_tool.content)
-    except (TypeError, json.JSONDecodeError):
-        return {}
-
+    from diagnosis_router import parse_result, route_device_result
+    result = parse_result(last_tool.content)
     if result.get("type") != "diagnose_device_result":
         return {}
 
-    if not result.get("deep_analysis_recommended"):
-        return {"deep_analysis_done": True}
+    routed = route_device_result(
+        result,
+        deep_analysis_invoke=lambda ip, project: mec_llm_diagnose_device.invoke({
+            "ip": ip, "project": project
+        }),
+    )
 
-    ip = result.get("ip") or result.get("entity", {}).get("ip", "")
-    project = result.get("project") or result.get("entity", {}).get("project", "")
-    if not ip:
-        return {"deep_analysis_done": True}
+    if routed.get("deep_analysis") or routed.get("deep_analysis_error"):
+        return {
+            "messages": [
+                SystemMessage(content="【确定性深度诊断结果】\\n" + json.dumps(
+                    routed, ensure_ascii=False
+                ))
+            ],
+            "deep_analysis_done": True,
+        }
 
-    try:
-        output = await asyncio.to_thread(mec_llm_diagnose_device.invoke, {"ip": ip, "project": project})
-    except Exception as exc:
-        logger.exception("确定性深度诊断调用失败: %s", exc)
-        output = json.dumps({
-            "schema_version": "1.0",
-            "type": "deep_diagnosis_result",
-            "status": "warning",
-            "stage": "deep",
-            "entity": {"ip": ip, "project": project},
-            "ip": ip,
-            "project": project,
-            "next_action": "report",
-            "analysis": "",
-            "error": str(exc)[:500],
-        }, ensure_ascii=False)
-
-    return {
-        "messages": [
-            SystemMessage(
-                content=f"【确定性深度诊断结果】\n{str(output)}"
-            )
-        ],
-        "deep_analysis_done": True,
-    }
-
+    return {"deep_analysis_done": True}
 
 # ──────────────────────────────────────────────
 # Agent node: LLM decides which tool to call or responds directly
