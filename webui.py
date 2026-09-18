@@ -586,6 +586,18 @@ function repairFlattenedMarkdown(text) {
     s = s.replace(/\\\|/g, '|');
     // Flattened tables commonly collapse row boundaries into double pipes.
     s = s.replace(/\|\|/g, '|\n|');
+
+    // Some model outputs preserve the pipe count but shift a row one column
+    // right: "| | device | 10.0.0.1 | 26% |". When the second cell looks like
+    // a MEC device name and the third cell is an IPv4 address, move that row
+    // back one column. This is deliberately narrower than generic blank-cell
+    // shifting so legitimate empty table cells are left alone.
+    s = s.replace(
+      /(^|\n)\|[ \t]*\|[ \t]*([^|\n]+?)[ \t]*\|[ \t]*((?:\d{1,3}\.){3}\d{1,3})[ \t]*\|([^\n|]*)\|/gm,
+      function(_, prefix, device, ip, diskOrNote) {
+        return prefix + '|' + device.trim() + '|' + ip.trim() + '|' + diskOrNote.trim() + '|';
+      }
+    );
   }
 
   // Restore headings, including headings that arrived without a space after '#'.
