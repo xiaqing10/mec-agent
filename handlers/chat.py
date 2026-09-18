@@ -267,22 +267,21 @@ async def handle_chat_stream(request):
         return response
 
     lock = _get_session_lock(session_id)
-    if session_id in _active_runs:
-        await _send("error", {"message": "当前会话已有请求正在处理，请等待完成后再发送。"})
-        await _send("done", {"status": "busy"})
-        return response
-    _active_runs[session_id] = {"task": current_task, "request_id": request_id}
     acquired = False
 
     try:
+        # The lock is the source of truth for per-session serialization.
+        # Do not publish _active_runs before the lock is actually owned:
+        # otherwise a completed/cancelled request can leave a stale marker
+        # that makes the next turn look permanently busy.
         try:
             await asyncio.wait_for(lock.acquire(), timeout=0.15)
         except asyncio.TimeoutError:
-            _active_runs.pop(session_id, None)
             await _send("error", {"message": "当前会话正在处理中，请稍后重试。"})
             await _send("done", {"status": "busy"})
             return response
         acquired = True
+        _active_runs[session_id] = {"task": current_task, "request_id": request_id}
         from langchain_core.messages import HumanMessage
 
         if _agent is None:
