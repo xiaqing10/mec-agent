@@ -45,7 +45,7 @@ Web UI (webui.py) / API Client
 | 文件 | 说明 |
 |------|------|
 | `server.py` | aiohttp Web 服务入口，含认证中间件，注册所有 API 路由 |
-| `agent.py` | LangGraph Agent 定义：AgentState、StateGraph（agent/tools/update_context/feedback 节点）、system prompt（工具优先策略）、MemorySaver 进程内会话状态（生产环境持久化计划后续切换） |
+| `agent.py` | LangGraph Agent 定义：AgentState、StateGraph（agent/tools/update_context/feedback 节点）、system prompt（工具优先策略）、AsyncSqliteSaver 持久化会话状态 |
 | `config.py` | 全局配置：LLM API（火山引擎 deepseek-v4-flash）、MySQL 连接、SSH 密钥路径、用户列表、飞书/钉钉 API 密钥、ContextVar 当前用户 ID |
 | `tools.py` | 兼容性包装，重新导出 `tools/` 包的 `TOOLS` 列表 |
 
@@ -261,3 +261,19 @@ Agent 不再在 System Prompt 中维护完整工具清单；**实际工具名称
 | ROS | roscore 运行状态、topic 频率 |
 | 数据源 | 今日图片数量 |
 | 传感器 | 摄像头和雷达在线率 |
+
+## 运行所需环境变量
+
+生产环境请通过环境变量提供以下配置，不要把密钥写回源码：
+
+```bash
+export VOLCENGINE_API_KEY="..."
+export BAIDU_API_KEY="..."
+export SELF_AGENT_API_KEY="..."
+export FEISHU_APP_SECRET="..."
+export MYSQL_PASS="..."
+export CHECKPOINT_DB_PATH="/path/to/checkpoints.db"
+export REPAIR_SIGNING_KEY="..."
+```
+
+LangGraph 当前使用 `AsyncSqliteSaver` 持久化会话状态；SQLite checkpoint 需要 `aiosqlite`，项目依赖已包含。当前主 Agent 只把深度诊断工具留给确定性结果 Router，不让普通 LLM 回合自行调用深度分析。
