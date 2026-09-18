@@ -629,6 +629,12 @@ function renderSessionList() {
 }
 
 function switchSession(id) {
+  // Never let a running stream continue to mutate the newly selected session UI.
+  if (window._streamController) {
+    window._stoppedByUser = true;
+    try { window._streamController.abort(); } catch(e) {}
+    window._streamController = null;
+  }
   currentSessionId = id;
   renderSessionList();
   renderMessages();
@@ -706,6 +712,9 @@ async function sendMessage() {
   input.value = '';
   input.style.height = 'auto';
   var btn = document.getElementById('sendBtn');
+  if (window._streamController) return;
+  btn.disabled = true;
+  var requestSessionId = currentSessionId;
 
   var stopKeywords = ["/stop", "停止", "取消", "终止", "停下"];
   var isStop = stopKeywords.some(function(kw) { return msg.indexOf(kw) !== -1; });
@@ -734,7 +743,7 @@ try {
       var response = await fetch('/api/v1/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
-        body: JSON.stringify({ message: msg, session_id: currentSessionId, model: selectedModel }),
+        body: JSON.stringify({ message: msg, session_id: requestSessionId, model: selectedModel }),
         signal: controller.signal
       });
       clearTimeout(timeoutId);
@@ -972,7 +981,7 @@ try {
             });
           };
           contentDiv.appendChild(copyBtn);
-          var session = getCurrentSession();
+          var session = sessions.find(function(item) { return item.id === requestSessionId; });
           if (session) {
             session.messages.push({ type: 'bot', content: fullText, extra: {} });
             saveSessions();
