@@ -562,7 +562,7 @@ function renderMD(text) {
   // Normalize them before Markdown parsing so paragraphs, lists and tables render normally.
   if (text == null) text = '';
   if (typeof text !== 'string') text = String(text);
-  text = text.replace(/\\r\\n/g, '\\n').replace(/\\n/g, '\\n').replace(/\\t/g, '\\t');
+  text = text.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n').replace(/\\t/g, '\t');
   var html = md.render(text);
   // 用 highlight.js 高亮代码块
   var tmp = document.createElement('div');
