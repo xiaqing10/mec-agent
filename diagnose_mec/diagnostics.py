@@ -20,7 +20,7 @@ logger = logging.getLogger("diagnose_mec.diagnostics")
 
 def _add_sensor_status(result: dict, host_ip: str, project: str = ""):
     try:
-        si = get_sensor_status(host_ip)
+        si = get_sensor_status(host_ip, project)
         if si.get("total_cameras", 0) > 0 or si.get("total_radars", 0) > 0:
             result["sensor_status"] = si
     except Exception:
@@ -150,7 +150,7 @@ def diagnose_container_offline(host_ip: str, progress_cb=None) -> dict:
     return _add_sensor_status(result, host_ip)
 
 
-def diagnose_zero_images(host_ip: str, container_ssh_info=None, progress_cb=None) -> dict:
+def diagnose_zero_images(host_ip: str, container_ssh_info=None, progress_cb=None, project: str = "") -> dict:
     logger.info("=" * 70)
     logger.info("🔍 诊断：容器在线但今日图片为0 - %s", host_ip)
     logger.info("=" * 70)
@@ -461,7 +461,7 @@ def diagnose_zero_images(host_ip: str, container_ssh_info=None, progress_cb=None
         elif today_image_count < 0:
             result["diagnosis"]["issue"] = "无法获取图片数"
 
-    return _add_sensor_status(result, host_ip)
+    return _add_sensor_status(result, host_ip, project)
 
 
 def _check_process_logs(host_ip: str, result: dict):
