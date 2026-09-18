@@ -215,73 +215,40 @@ python3 server.py
 
 ---
 
-## Agent System Prompt 规则
+## Agent System Prompt 策略
 
-### 可用工具
+Agent 不再在 System Prompt 中维护完整工具清单；**实际工具名称、参数和能力以 Tool Schema 为唯一事实来源**。Prompt 只负责路由原则和安全边界，避免工具数量/参数变更后出现提示词过期。
 
-| 工具 | 说明 |
-|------|------|
-| `diagnose_device` | 诊断单台设备（SSH 远程检查物理机、容器、进程、ROS、数据源、传感器 6 个维度） |
-| `diagnose_project` | 批量诊断项目下所有异常设备 |
-| `device_info` | 查询设备详细指标（硬盘、内存、CPU、网络、运行时间、历史数据） |
-| `analyze_logs` | 分析监控日志，P0-P3 分级 |
-| `llm_analyze_logs` | LLM 深度分析日志 |
-| `llm_diagnose_device` | SSH 采集设备全部原始数据 + LLM 深度根因分析（根因/影响范围/修复建议/预防措施） |
-| `fetch_report` | 获取最新监控报告原文 |
-| `query_abnormal` | 查询异常设备统计 |
-| `push_to_dingtalk` | 推送消息到钉钉 |
-| `ssh_exec_command` | 执行单个 SSH 只读命令（仅用于 diagnose_device 和 device_info 不覆盖的细粒度查询） |
-| `help_info` | 帮助信息 |
-| `query_device_from_db` | 从 MySQL 数据库查询单台设备状态（无需 SSH，即使设备离线也能查到历史记录） |
-| `query_project_from_db` | 从 MySQL 数据库查询整个项目状态（无需飞书报告） |
-| `memory` | 管理用户记忆（add/replace/remove/list），可主动保存重要偏好、习惯或事实 |
-| `repair_device` | 安全修复操作（重启容器/进程/服务、清理缓存/日志/临时文件），需用户在前端弹窗确认后才执行 |
-| `query_event_records` | 从 MySQL 查询事件记录列表（支持多条件过滤：项目/设备/日期/事件类型/车牌） |
-| `query_project_event_stats` | 查询项目事件统计汇总（按类型/设备分类） |
-| `fetch_event_image` | 根据事件记录 ID 从远程设备抓取事件图片并返回 URL |
-| `query_traffic_flow` ★新增★ | 查询断面流量（车流量/平均速度/时间占有率/道路状态），数据源：MongoDB radarData.flowStat |
-| `query_events` ★新增★ | 查询雷达事件记录（事件类型、车牌、车速、车道、方向），数据源：MongoDB radarData.event |
-| `query_event_stats` ★新增★ | 按事件类型统计分布（违章/拥堵/异常分类汇总），数据源：MongoDB radarData.event |
-| `query_device_metrics` ★新增★ | 查询 MEC 设备运行健康指标（CPU/内存/磁盘/温度/告警），数据源：MongoDB radarData.metric |
-| `analyze_traffic_pattern` ★新增★ | 综合交通流时间序列分析（高峰识别、拥堵分析），数据源：MongoDB radarData.flowStat |
-| `traffic_analysis_report` ★新增★ | LLM 二次分析报告（总结/异常识别/流量预测/事件-流量关联），数据源：MongoDB 多集合聚合 |
+### 核心策略
 
-### 规则列表
+| 类别 | 策略 |
+|---|---|
+| 实体解析 | 非IP设备名/编号先调用 `resolve_mec_device`；项目名/简称先调用 `resolve_mec_project`；多候选禁止猜测 |
+| 上下文 | 当前消息明确指定的项目/设备优先；历史上下文只用于明确的“这个设备/该项目”等省略指代 |
+| MEC诊断 | 实时设备诊断使用 `mec_diagnose_device`；项目批量诊断使用 `mec_diagnose_project` |
+| 数据查询 | 已有数据库状态优先 `query_mec_*`；CPU/内存/硬盘等具体指标使用 `mec_device_info` |
+| 细粒度SSH | 只有聚合工具无法覆盖的具体文件/日志/配置才使用 `mec_ssh_exec` |
+| 深度分析 | 基础诊断明确需要进一步分析时才调用 `mec_llm_diagnose_device` |
+| 数据源 | 默认使用MEC数据；只有明确的服务器/道路/交通流场景使用 `query_server_*` |
+| 修复 | 用户明确要求修复后才调用修复工具；先生成方案，确认后执行 |
+| 记忆 | 只有明确的长期偏好/事实才写入记忆；一次性查询不能成为长期偏好 |
+| 结论 | 先工具、后事实总结；不得根据历史状态或模型常识猜测实时设备状态 |
 
-| # | 规则内容 |
-|---|---------|
-| 1 | 用户说"看/查看/怎么样/情况/状态/有无/多少/统计"表示只读，先查再回答 |
-| 2 | 用户说"诊断/排查/检查原因/修/恢复"表示要执行操作 |
-| 3 | 用户指定了 IP 或设备名时，隐含诊断意图 |
-| 4 | 如果用户问"这台设备的内存/硬盘"等且没有指定 IP，检查对话历史中最近操作的设备 |
-| 5 | 不要假设设备状态，调用工具获取真实数据 |
-| 6 | 对于闲聊或问候，直接友好回复，不需要调用工具 |
-| 7 | 回答要简洁专业，用中文 |
-| 8 | `ssh_exec_command` 用于执行单个只读命令（cat/tail/ls/ps/grep/df 等），仅在 `diagnose_device` 和 `device_info` 不覆盖的特定细粒度场景下使用（如查看特定日志文件、特定配置文件内容）。**严禁用 `ssh_exec_command` 替代 `diagnose_device` 或 `device_info` 进行多维度诊断** |
-| 9 | 当用户要求对某台设备进行诊断、排查、检查问题、查看状态（包括"帮我看下"、"怎么样"、"有什么问题"、"什么情况"、"查一下"等隐含诊断意图的表述），或指定了 IP/设备名并期望了解设备整体状况时，**必须优先调用 `diagnose_device`**（一次调用完成 6 维度全面检查）。`diagnose_device` 是高聚合工具，远比逐个调用 `ssh_exec_command` 高效，**严禁用 `ssh_exec_command` 替代** |
-| 10 | 当用户问设备详细信息（硬盘、内存、CPU 等）时，使用 `device_info` 工具。`device_info` 也是一次调用完成多个指标查询，**不要用 `ssh_exec_command` 逐个命令替代** |
-| 11 | 当用户想看 `diagnose_device` 和 `device_info` 不覆盖的特定日志文件、特定配置文件内容等细粒度查询时，才使用 `ssh_exec_command` |
-| 12 | `ssh_exec_command` 的 `ros_env` 参数控制是否需要 ROS 环境初始化。涉及 rostopic/rosnode/rosservice 等 ROS 命令时必须传 `ros_env=True` |
-| 13 | 当 `diagnose_device` 返回诊断结果后，**必须将 6 个维度（物理机、容器、进程、ROS、数据源、传感器）的完整结果展示给用户**，不要遗漏任何维度，不要重新组织成其他格式。即使某些维度为"skip"状态也要展示，让用户全面了解设备状况 |
-| 14 | 基本诊断（`diagnose_device`）后，如果 6 个维度中存在 error 状态但根因不明确（如进程日志显示未知错误、ROS topic 全部无数据但进程正常等），应主动调用 `llm_diagnose_device` 做 LLM 深度根因分析。如果 `diagnose_device` 已明确给出根因（如 docker_service_down、gpu_driver_error、dev_container_stopped 等），则直接给出结果和修复建议，不需要再做深度分析 |
-| 15 | SSH 连接策略：系统会先尝试公钥登录，公钥失败后自动尝试数据库中的密码登录；如果都失败，会返回数据库中记录的历史状态信息 |
-| 16 | 当诊断结果显示"数据库记录"时，说明该数据是历史快照，不是实时数据，回答时需要说明这一点 |
-| 17 | 回复末尾不要输出任何数字评分或分数，不要附加无关的数字 |
-| 18 | 当展示项目概览、核心指标、异常设备列表等统计数据时，必须使用标准 markdown 表格格式（以 `\|` 开头、有表头分隔行），不要使用 `│` 或 ASCII 画框的自定义表格 |
-| 19 | `query_device_from_db` 从 MySQL 数据库查询设备状态，无需 SSH 连接。适用于：a)快速查看设备概况 b)设备离线时查看历史记录 c)批量了解设备状态。数据库数据不是实时的，需要说明数据更新时间 |
-| 20 | `query_project_from_db` 从 MySQL 数据库查询项目状态，无需解析飞书报告。返回项目下所有设备的汇总统计和异常设备列表 |
-| 21 | 数据源优先级：数据库（`query_device_from_db` / `query_project_from_db`）> 飞书报告（`analyze_logs` / `fetch_report` / `query_abnormal`）。除非用户明确说"从飞书/报告获取"，否则优先从数据库查询 |
-| 22 | 优先用 `query_device_from_db` 查询设备基本状态（只读场景），需要深度诊断时再用 `diagnose_device`（SSH 实时检查） |
-| 23 | markdown 表格：表头列数和数据行列数必须严格一致。表头分隔行（`\|---\|`）中每个列的 `-` 数量至少 3 个。确保每行 `\|` 的数量相同 |
-| 24 | 表格第一行必须是表头，第二行必须是分隔行（`\|---\|`），之后才是数据行。不要在表格前后使用 ` ``` ` 代码块包裹表格 |
-| 25 | 工具返回的结果中已经包含了数据来源和时间说明，直接呈现工具返回的内容即可，不需要自己补充"数据来源"或"数据说明" |
-| 26 | 工具返回的 markdown 表格直接原样复制，不要自己重新生成表格。如果某些列全是 0 被工具自动过滤掉了，也不要去修改它。可以在表格后面附加文字说明 |
-| 27 | 用户提到的项目名直接从数据库 `mec_device` 表的 `project` 字段获取，如德会、德会隧道、柯诸等。不要假设项目别名 |
-| 28 | 对话中如果用户透露了重要偏好（如回复风格、关注项目）、习惯（如常查看的维度、常用操作）或个人背景信息，应主动调用 `memory` 工具保存（target=user），但不要为了保存而保存，只保存有长期价值的模式信息 |
-| 29 | 诊断完成后，如果发现了可修复的问题（如容器停止、进程挂掉、磁盘空间不足），应主动调用 `repair_device` 工具生成修复方案。但不要自动执行，系统会生成方案供用户在前端确认 |
-| 30 | `repair_device` 支持以下操作：restart_container（重启容器，需容器名）、restart_process（重启进程，需进程名）、restart_service（重启服务，需服务名）、clear_cache（清理内存缓存）、vacuum_journal（清理日志保留 200M）、clean_temp（清理 7 天前临时文件） |
-| 31 | 修复操作是安全的：只重启不删除，清理操作有保留策略。不要建议白名单外的操作。每次修复后建议重新诊断验证效果 |
-| 32 | **设备诊断标准流程**：a) 调用 `diagnose_device` 获取 6 维度诊断结果 → b) 完整展示所有维度 → c) 若根因明确直接给出修复建议（可调用 `repair_device`）；若根因不明确则调用 `llm_diagnose_device` 深度分析 → d) 深度分析后给出修复建议 |
+### 诊断流程
+
+```
+用户请求
+  ↓
+实体解析（必要时 resolve_mec_device / resolve_mec_project）
+  ↓
+选择确定性查询/诊断 Tool
+  ↓
+获取实时或数据库事实
+  ↓
+若基础诊断明确需要深度分析 → mec_llm_diagnose_device
+  ↓
+输出：结论 → 关键证据 → 影响 → 建议
+```
 
 ### 诊断维度
 
