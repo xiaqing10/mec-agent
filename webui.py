@@ -634,6 +634,8 @@ function switchSession(id) {
     window._stoppedByUser = true;
     try { window._streamController.abort(); } catch(e) {}
     window._streamController = null;
+    var sendBtn = document.getElementById('sendBtn');
+    if (sendBtn) sendBtn.disabled = false;
   }
   currentSessionId = id;
   renderSessionList();
