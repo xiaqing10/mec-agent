@@ -12,10 +12,6 @@ logger = logging.getLogger(__name__)
 
 @tool
 def mec_diagnose_device(ip: str, project: str = "") -> str:
-    # Keep JSON serialization local to the tool call as a runtime guard. This
-    # avoids failures after hot-reload/module reuse where a stale module global
-    # could otherwise leave `json` unavailable.
-    import json as _json
     """诊断单台MEC设备。
 
     通过SSH远程检查设备的6个维度：物理机、容器、进程(含ROS)、主题+日志、今日事件数、传感器。
