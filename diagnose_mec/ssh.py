@@ -8,7 +8,7 @@ import concurrent.futures
 import re
 from pathlib import Path
 
-from config import SSH_KEY_PATH,SSH_CMD_PATH, CONTAINER_SSH_PORT, CONTAINER_SSH_USER, PHYSICAL_SSH_USERS
+from config import SSH_KEY_PATH, SSH_CMD_PATH, CONTAINER_SSH_PORT, CONTAINER_SSH_USER, PHYSICAL_SSH_USERS, PHYSICAL_SSH_USERS_ENABLED
 
 logger = logging.getLogger("diagnose_mec.ssh")
 
