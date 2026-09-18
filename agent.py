@@ -504,6 +504,16 @@ def should_continue(state: AgentState) -> Literal["tools", "update_context", "__
     return "update_context"
 
 
+def _agent_node_sync(state: AgentState) -> dict:
+    """Compatibility wrapper for synchronous callers such as LangGraph Studio."""
+    return asyncio.run(agent_node(state))
+
+
+def _post_tool_router_node_sync(state: AgentState) -> dict:
+    """Compatibility wrapper for synchronous graph invocation."""
+    return asyncio.run(post_tool_router_node(state))
+
+
 # ──────────────────────────────────────────────
 # Build graph
 # ──────────────────────────────────────────────
@@ -513,10 +523,10 @@ def build_agent():
 
     graph = StateGraph(AgentState)
 
-    graph.add_node("agent", agent_node)
+    graph.add_node("agent", _agent_node_sync)
     graph.add_node("tools", tool_node)
     graph.add_node("route_request", route_request_node)
-    graph.add_node("post_tool_router", post_tool_router_node)
+    graph.add_node("post_tool_router", _post_tool_router_node_sync)
     graph.add_node("update_context", update_context_node)
     graph.add_node("feedback", feedback_node)
 
