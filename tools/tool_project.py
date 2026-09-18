@@ -10,8 +10,9 @@ logger = logging.getLogger(__name__)
 def mec_diagnose_project(project: str) -> str:
     """诊断指定项目下所有异常设备。
 
-    优先从MySQL数据库获取项目设备状态和异常列表，如果数据库没有该项目数据，
-    则回退到飞书监控报告解析。然后逐台SSH诊断，汇总结果。
+    优先从MySQL数据库获取项目异常设备，如果数据库没有该项目数据则回退到飞书报告。
+    之后每台候选设备统一走 mec_diagnose_device → Structured Result → Result Router，
+    不再在项目级维护另一套诊断/LLM判定规则。
 
     Args:
         project: 项目名，如 德会、德会隧道、柯诸、汕梅、汉宜、沈海、绵九、贵阳、青海、南京仙新路、山西灵石 等
