@@ -118,6 +118,8 @@ def parse_abnormal_devices(report_text, project_name=None):
             return container_offline, zero_images, physical_offline
 
     for proj_name in found_projects:
+        # Respect an explicitly requested project; the previous code compared
+        # project_name with itself and therefore never filtered anything.
         if project_name and proj_name != project_name:
             continue
 
