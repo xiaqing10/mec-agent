@@ -177,6 +177,7 @@ async def handle_chat(request):
             {"messages": [HumanMessage(content=user_message)],
              "request_project": req_project,
              "request_ip": req_ip,
+             "request_model": model_id,
              # Explicitly named entities override stale inherited context.
              "last_project": req_project,
              "last_ip": req_ip},
