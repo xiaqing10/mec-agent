@@ -140,9 +140,11 @@ async def handle_chat(request):
         return web.json_response({"success": False, "error": "请求体必须为JSON格式"}, status=400)
 
     user_message = body.get("message", "").strip()
-    session_id = body.get("session_id", "default")
+    session_id = str(body.get("session_id") or "").strip()
     if not user_message:
         return web.json_response({"success": False, "error": "message字段不能为空"}, status=400)
+    if not session_id:
+        return web.json_response({"success": False, "error": "session_id不能为空，禁止使用公共default会话"}, status=400)
 
     model_id = body.get("model", "")
     if model_id:
@@ -160,31 +162,24 @@ async def handle_chat(request):
         return web.json_response({"success": False, "error": "当前会话已有请求正在处理，请等待完成后再发送。"}, status=409)
     acquired = False
     try:
-        await lock.acquire()
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=0.15)
+        except asyncio.TimeoutError:
+            return web.json_response({"success": False, "error": "当前会话正在处理中，请稍后重试。"}, status=409)
         acquired = True
         from langchain_core.messages import HumanMessage
         agent = await get_agent()
-        config = {"configurable": {"thread_id": session_id, "recursion_limit": 50}}
+        config = {"configurable": {"thread_id": session_id}, "recursion_limit": 50}
 
         state = await agent.aget_state(config)
         history = (state.values.get("messages", []) if state and state.values else [])
-        if _count_msg_chars(history) > _MAX_MSG_CHARS:
-            trimmed = _trim_messages_for_llm(history)
-            logger.info("⏳ 截断上下文: %d 条(%d 字符) → %d 条(%d 字符)",
-                        len(history), _count_msg_chars(history),
-                        len(trimmed), _count_msg_chars(trimmed))
-            agent.update_state(config, {"messages": trimmed})
-
         from agent import extract_explicit_request_context
         req_project, req_ip = extract_explicit_request_context(user_message)
         final_state = await agent.ainvoke(
             {"messages": [HumanMessage(content=user_message)],
-             "request_project": req_project,
-             "request_ip": req_ip,
-             "request_model": model_id,
-             # Explicitly named entities override stale inherited context.
-             "last_project": req_project,
-             "last_ip": req_ip},
+             "request_project": req_project or None,
+             "request_ip": req_ip or None,
+             "request_model": model_id or None},
             config
         )
         from response_fallback import build_deterministic_fallback
@@ -299,7 +294,7 @@ async def handle_chat_stream(request):
         return response
 
     lock = _get_session_lock(session_id)
-    if lock.locked() or session_id in _active_runs:
+    if session_id in _active_runs:
         await _send("error", {"message": "当前会话已有请求正在处理，请等待完成后再发送。"})
         await _send("done", {"status": "busy"})
         return response
@@ -307,7 +302,13 @@ async def handle_chat_stream(request):
     acquired = False
 
     try:
-        await lock.acquire()
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=0.15)
+        except asyncio.TimeoutError:
+            _active_runs.pop(session_id, None)
+            await _send("error", {"message": "当前会话正在处理中，请稍后重试。"})
+            await _send("done", {"status": "busy"})
+            return response
         acquired = True
         from langchain_core.messages import HumanMessage
 
@@ -323,7 +324,7 @@ async def handle_chat_stream(request):
 
         await _send("info", {"status": "started", "session_id": session_id})
 
-        config = {"configurable": {"thread_id": session_id, "recursion_limit": 50}}
+        config = {"configurable": {"thread_id": session_id}, "recursion_limit": 50}
 
         current_tool = None
         tool_output_lines = []
