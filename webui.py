@@ -557,12 +557,32 @@ var sessions = [];
 var currentSessionId = null;
 var loggedIn = false;
 
-function renderMD(text) {
-  // LLM/SSE occasionally returns escaped line breaks (\\n) instead of real newlines.
-  // Normalize them before Markdown parsing so paragraphs, lists and tables render normally.
-  if (text == null) text = '';
+function normalizeMarkdownText(text) {
+  if (text == null) return '';
   if (typeof text !== 'string') text = String(text);
+
+  // SSE JSON.parse normally restores real newlines, but some model/provider
+  // responses arrive with Markdown line boundaries flattened. In that case
+  // Markdown tables/headings become literal text (e.g. "|a|b||---|---|").
   text = text.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n').replace(/\\t/g, '\t');
+
+  // Restore only high-confidence Markdown boundaries. Do not globally insert
+  // newlines after punctuation, which could alter ordinary prose.
+  text = text
+    .replace(/\\s+(#{1,6})(?=\\S)/g, '\n$1 ')
+    .replace(/\\s+(\\|[-: ]{3,}\\|)/g, '\n$1')
+    .replace(/(\\|[^\\n]*\\|)(?=\\|)/g, '$1\n')
+    .replace(/\\s+(>\\s)/g, '\n$1')
+    .replace(/\\s+([-*+]\\s+)/g, '\n$1')
+    .replace(/\\s+(\\d+\\.\\s+)/g, '\n$1');
+
+  // A heading may be directly attached to the preceding sentence.
+  text = text.replace(/([。！？.!?])(?=#{1,6}\\S)/g, '$1\n');
+  return text;
+}
+
+function renderMD(text) {
+  text = normalizeMarkdownText(text);
   var html = md.render(text);
   // 用 highlight.js 高亮代码块
   var tmp = document.createElement('div');
