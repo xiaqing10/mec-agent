@@ -46,12 +46,22 @@ def cleanup_old_logs(days: int = 7) -> int:
 
 
 def _resolve_device(query: str, project: str = "") -> tuple:
+    """Resolve a device name without silently selecting an arbitrary duplicate."""
     try:
         device = lookup_device(query, project)
         if device:
+            if len(device) > 1:
+                projects = sorted({str(d.get("project") or "") for d in device if d.get("project")})
+                return query, {
+                    "host": query,
+                    "project": project,
+                    "_ambiguous": True,
+                    "matches": len(device),
+                    "projects": projects,
+                }
             return device[0]["ip"], device[0]
     except Exception:
-        pass
+        logger.exception("设备解析失败: %s / project=%s", query, project)
     return query, {"host": query, "username": "", "password": "", "project": project}
 
 
