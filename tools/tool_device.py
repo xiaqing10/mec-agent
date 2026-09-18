@@ -558,6 +558,9 @@ def mec_llm_diagnose_device(ip: str, project: str = "") -> str:
     device_info = None
     if not re.match(r'^\d+\.\d+\.\d+\.\d+$', ip):
         resolved_ip, device_info = _resolve_device(ip, project=project or None)
+        if device_info and device_info.get("_ambiguous"):
+            projects = "、".join(device_info.get("projects") or []) or "多个项目"
+            return f"设备名 '{ip}' 匹配到 {device_info.get('matches', 0)} 台设备（{projects}），未自动选择。请指定项目或IP。"
         if resolved_ip != ip:
             ip = resolved_ip
     if not re.match(r'^\d+\.\d+\.\d+\.\d+$', ip):
@@ -641,7 +644,7 @@ def mec_llm_diagnose_device(ip: str, project: str = "") -> str:
             {"role": "user", "content": prompt}
         ],
         "temperature": 0.3,
-        "max_tokens": 16384
+        "max_tokens": 4096
     }
     req = urllib.request.Request(
         url,
@@ -649,7 +652,7 @@ def mec_llm_diagnose_device(ip: str, project: str = "") -> str:
         headers={"Authorization": f"Bearer {LLM_API_KEY}", "Content-Type": "application/json"}
     )
     try:
-        resp = urllib.request.urlopen(req, timeout=120)
+        resp = urllib.request.urlopen(req, timeout=45)
         data = json.loads(resp.read().decode())
         content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
         if content:
@@ -660,7 +663,7 @@ def mec_llm_diagnose_device(ip: str, project: str = "") -> str:
         body = e.read().decode(errors='replace')[:500]
         return f"LLM API HTTP {e.code}: {body}"
     except Exception as e:
-        return f"LLM API请求异常: {e}", ip):
+        return f"LLM API请求异常: {e}"
         msg = f"数据库中未找到设备 '{ip}'"
         if project:
             msg += f"（项目：{project}）"
