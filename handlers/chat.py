@@ -498,6 +498,8 @@ async def handle_chat_stream(request):
         current_run = _active_runs.get(session_id)
         if current_run and current_run.get("task") is current_task:
             _active_runs.pop(session_id, None)
+        if acquired and not lock.locked():
+            _session_locks.pop(session_id, None)
 
     return response
 
