@@ -106,7 +106,7 @@ def mec_diagnose_device(ip: str, project: str = "") -> str:
                 "physical_user": "", "login_method": "",
                 "ssh_password": "", "unreachable": True
             })
-            return _build_diag_result(ip, dimensions, "physical_unreachable")
+            return _build_diag_result(ip, dimensions, "physical_unreachable", project=effective_project, access={"device_reachable": True, "physical_ssh": False, "container_ssh": True, "access_mode": "direct_container"})
 
         _notify_progress("物理机", "warning", "物理机SSH不可用，但容器SSH可直接访问，继续诊断")
         dimensions.append({
@@ -173,7 +173,7 @@ def mec_diagnose_device(ip: str, project: str = "") -> str:
             "ssh_password": cd.get("_ssh_password", ""),
             "container_unreachable": True,
         })
-        return _build_diag_result(ip, dimensions, problem)
+        return _build_diag_result(ip, dimensions, problem, project=effective_project)
 
     if cs:
         container_detail = f"dev容器: {cs}"
@@ -205,7 +205,7 @@ def mec_diagnose_device(ip: str, project: str = "") -> str:
         from ._diag_cache import cache_diag_data
         cache_diag_data(ip, {"physical_user": cd.get("_login_user", ""), "login_method": cd.get("_login_method", ""),
                               "ssh_password": cd.get("_ssh_password", ""), "docker_unavailable": True})
-        return _build_diag_result(ip, dimensions, problem)
+        return _build_diag_result(ip, dimensions, problem, project=effective_project)
     elif dev_cont and "不存在" in dev_cont:
         if "不存在" in dev_cont:
             problem, detail = "dev_container_missing", f"dev容器不存在"
@@ -231,7 +231,7 @@ def mec_diagnose_device(ip: str, project: str = "") -> str:
         from ._diag_cache import cache_diag_data
         cache_diag_data(ip, {"physical_user": cd.get("_login_user", ""), "login_method": cd.get("_login_method", ""),
                               "ssh_password": cd.get("_ssh_password", ""), "container_unreachable": True})
-        return _build_diag_result(ip, dimensions, problem)
+        return _build_diag_result(ip, dimensions, problem, project=effective_project)
     elif "Docker" in (issue_text or ""):
         problem, detail = "docker_service_down", "Docker服务未运行"
         _notify_progress("容器", "error", detail)
@@ -254,7 +254,7 @@ def mec_diagnose_device(ip: str, project: str = "") -> str:
         from ._diag_cache import cache_diag_data
         cache_diag_data(ip, {"physical_user": cd.get("_login_user", ""), "login_method": cd.get("_login_method", ""),
                               "ssh_password": cd.get("_ssh_password", ""), "docker_unavailable": True})
-        return _build_diag_result(ip, dimensions, problem)
+        return _build_diag_result(ip, dimensions, problem, project=effective_project)
 
     # 容器存在且SSH可达，或前面已通过容器直连完成诊断
     container_ssh_info = cd.get("_container_ssh_info") if cd else None
@@ -486,7 +486,7 @@ def mec_diagnose_device(ip: str, project: str = "") -> str:
         },
     })
 
-    return _build_diag_result(ip, dimensions, root_cause if has_error else "")
+    return _build_diag_result(ip, dimensions, root_cause if has_error else "", project=effective_project)
 
 
 @tool
