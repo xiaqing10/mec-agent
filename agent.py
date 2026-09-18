@@ -35,6 +35,8 @@ from config import AVAILABLE_MODELS
 from tools import TOOLS, mec_llm_diagnose_device
 from llm_gateway import get_chat_model, invoke_messages, switch_model as gateway_switch_model
 from request_router import route_request
+from prompt_config import load_agent_system_prompt
+from response_fallback import build_deterministic_fallback
 
 
 # ──────────────────────────────────────────────
@@ -283,53 +285,8 @@ async def agent_node(state: AgentState) -> dict:
     route_hint = state.get("route_hint", "general")
     selected_tools = _select_agent_tools(route_hint)
 
-    # Keep the system prompt compact. Tool schemas are the source of truth.
-    system_prompt = """你是智慧交通/MEC运维智能体。首要原则：**先用工具获得事实，再回答；不要凭空猜设备、项目、状态或根因。**
-
-## 1. 实体解析（最高优先级）
-- 明确IP：直接使用该IP。
-- 设备名、编号、简称、后缀或可能有多个匹配：先调用 `resolve_mec_device`，不要自行猜IP。
-- 项目名、简称或可能有多个解释：先调用 `resolve_mec_project`，不要自行猜标准项目名。
-- 工具返回多个候选时，不要选择“第一个”；要求用户补充项目或IP。
-- 当前消息明确指定的项目/设备优先于历史上下文。
-- 历史上下文只用于“这个设备/该项目/它/继续查”等明确省略指代；当前消息冲突时，以当前消息为准。
-
-## 2. 数据源与任务路由
-- MEC设备数据默认使用 `query_mec_*` / `mec_*` 工具。
-- 只有用户明确提到“服务器、道路、雷达交通流、服务器事件”等服务器/交通场景时，才使用 `query_server_*` 工具。
-- “服务器事件”和“MEC设备事件”是两套不同数据源，绝不能混用。
-- 数据库已有状态/历史：优先数据库查询工具。
-- 实时设备状态、SSH、容器、ROS、进程、日志或图片诊断：使用 `mec_diagnose_device`。
-- 只要具体CPU/内存/磁盘/网络等指标：优先 `mec_device_info`。
-- 只有标准工具无法覆盖的具体文件/日志/配置查询，才使用 `mec_ssh_exec`。
-- 项目整体诊断：使用 `mec_diagnose_project`。
-
-## 3. 诊断流程
-- 单设备诊断优先 `mec_diagnose_device`，不要直接跳到LLM深度分析。
-- 基础诊断返回结构化结果后，只在 `deep_analysis_recommended=true` 时调用 `mec_llm_diagnose_device`；不要自行猜测是否需要深度分析。
-- “物理机SSH不可用”不等于“设备不可达”；以诊断工具最终的设备/容器可达性为准。
-- 工具已经给出结构化诊断结果时，直接基于工具证据总结，不重新猜测。
-- 根因与症状必须分开；例如“图片为0”不应自动当作根因。
-
-## 4. 修复与副作用
-- 不要主动执行修复。只有用户明确要求重启、恢复、修复、清理等操作时，才调用修复相关工具。
-- `mec_repair_device` 只生成待确认方案；没有用户明确确认，不执行实际修复。
-- `push_to_dingtalk`、写入记忆等有副作用的工具，只在用户明确要求或确有必要完成用户指令时使用。
-- 记忆只保存用户明确表达的长期偏好/事实；不要因为一次查询项目或设备就保存成“常关注项目”。
-
-## 5. 工具优先原则
-- 能由确定性工具解决的歧义，不交给LLM猜。
-- 同一个工具不要无意义重复调用；只有结果明确要求重试/补充信息时才重试。
-- 不要把一个工具失败直接解释成整个设备失败；区分解析失败、认证失败、网络失败、物理机不可用、容器不可用和数据缺失。
-- 不要伪造工具结果、IP、项目、时间或指标。
-- 不要重复输出大段原始日志；重点总结结论、关键证据、影响和建议。
-
-## 6. 回答格式
-- 普通问答：直接回答。
-- 诊断类：按“结论 → 关键证据 → 影响 → 建议”简洁汇总。
-- 工具已提供前端结构化面板的数据，不要再次大段复制。
-- 表格使用标准Markdown表格，不放进代码块。
-- 信息不足时明确说明工具未获取到该信息，不要猜测。"""
+    # Base prompt lives outside the code so operators can tune it without editing agent logic.
+    system_prompt = load_agent_system_prompt()
 
     # Inject current real date so LLM doesn't use its training data cutoff date
     from datetime import datetime
@@ -439,6 +396,22 @@ def update_context_node(state: AgentState) -> dict:
 
 
 # ──────────────────────────────────────────────
+# Final-response guard: deterministic, no second LLM call
+# ──────────────────────────────────────────────
+def finalize_response_node(state: AgentState) -> dict:
+    """Guarantee a non-empty final AI response using only current-turn facts."""
+    messages = state.get("messages", [])
+    for msg in reversed(messages):
+        if getattr(msg, "type", "") != "ai":
+            continue
+        content = getattr(msg, "content", "")
+        if isinstance(content, str) and content.strip():
+            return {}
+        break
+    return {"messages": [AIMessage(content=build_deterministic_fallback(messages))]}
+
+
+# ──────────────────────────────────────────────
 # Feedback node: log intent and mark for feedback
 # ──────────────────────────────────────────────
 def feedback_node(state: AgentState) -> dict:
@@ -510,6 +483,7 @@ def build_agent():
     graph.add_node("route_request", route_request_node)
     graph.add_node("post_tool_router", _post_tool_router_node_sync)
     graph.add_node("update_context", update_context_node)
+    graph.add_node("finalize_response", finalize_response_node)
     graph.add_node("feedback", feedback_node)
 
     graph.set_entry_point("route_request")
@@ -527,7 +501,8 @@ def build_agent():
 
     graph.add_edge("tools", "post_tool_router")
     graph.add_edge("post_tool_router", "agent")
-    graph.add_edge("update_context", "feedback")
+    graph.add_edge("update_context", "finalize_response")
+    graph.add_edge("finalize_response", "feedback")
     graph.add_edge("feedback", END)
 
     return graph.compile()
@@ -555,6 +530,7 @@ def build_agent_with_checkpointer(memory):
     graph.add_node("tools", tool_node)
     graph.add_node("post_tool_router", post_tool_router_node)
     graph.add_node("update_context", update_context_node)
+    graph.add_node("finalize_response", finalize_response_node)
     graph.add_node("feedback", feedback_node)
 
     graph.set_entry_point("route_request")
@@ -570,7 +546,8 @@ def build_agent_with_checkpointer(memory):
     )
     graph.add_edge("tools", "post_tool_router")
     graph.add_edge("post_tool_router", "agent")
-    graph.add_edge("update_context", "feedback")
+    graph.add_edge("update_context", "finalize_response")
+    graph.add_edge("finalize_response", "feedback")
     graph.add_edge("feedback", END)
     return graph.compile(checkpointer=memory)
 
@@ -579,13 +556,12 @@ def build_agent_with_checkpointer(memory):
 # Convenience: run agent and extract response
 # ──────────────────────────────────────────────
 def extract_agent_response(state: dict) -> str:
-    """Extract the LLM's final text response from the agent state."""
+    """Extract a non-empty final response, using the deterministic fallback as a last resort."""
     messages = state.get("messages", [])
     for msg in reversed(messages):
-        if isinstance(msg, AIMessage) and msg.content:
-            return msg.content
-        if isinstance(msg, ToolMessage):
-            # If the last message was a tool result, the LLM might not have responded yet
-            # This shouldn't happen in normal flow, but handle gracefully
-            pass
-    return "处理完成，但我未能生成回复。请再试一次。"
+        if isinstance(msg, AIMessage):
+            content = msg.content if isinstance(msg.content, str) else ""
+            if content.strip():
+                return content
+            break
+    return build_deterministic_fallback(messages)
