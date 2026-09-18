@@ -152,6 +152,8 @@ async def handle_chat(request):
         set_current_user_id(username)
 
     lock = _get_session_lock(session_id)
+    if lock.locked():
+        return web.json_response({"success": False, "error": "当前会话已有请求正在处理，请等待完成后再发送。"}, status=409)
     acquired = False
     try:
         await lock.acquire()
@@ -275,8 +277,12 @@ async def handle_chat_stream(request):
         await _send("done", {"status": "stopped"})
         return response
 
-    _active_runs[session_id] = current_task
     lock = _get_session_lock(session_id)
+    if lock.locked() or session_id in _active_runs:
+        await _send("error", {"message": "当前会话已有请求正在处理，请等待完成后再发送。"})
+        await _send("done", {"status": "busy"})
+        return response
+    _active_runs[session_id] = current_task
     acquired = False
 
     try:
