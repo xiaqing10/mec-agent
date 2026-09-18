@@ -87,12 +87,9 @@ def switch_model(model_id: str) -> bool:
     if not cfg:
         logger.warning("未知模型: %s，可用: %s", model_id, list(AVAILABLE_MODELS.keys()))
         return False
-    global _llm, _llm_with_tools
     _current_model_id.set(model_id)
     _current_api_key.set(cfg["api_key"])
     _current_base_url.set(cfg["base_url"])
-    _llm = None  # trigger rebuild on next _get_llm() call
-    _llm_with_tools = None
     logger.info("🔄 切换模型: %s (%s)", model_id, cfg.get("label", ""))
     return True
 
@@ -115,6 +112,8 @@ class AgentState(TypedDict):
     conversation_intent: Optional[str]
     pending_feedback: bool
     auto_correctness: Optional[int]
+    request_project: str
+    request_ip: str
 
 
 def _extract_context_from_messages(messages: list) -> tuple:
@@ -152,25 +151,25 @@ def _extract_context_from_messages(messages: list) -> tuple:
 # ──────────────────────────────────────────────
 # LLM setup (lazy, avoid network calls at import time)
 # ──────────────────────────────────────────────
-_llm = None
-_llm_with_tools = None
+# Per-model immutable cache. ContextVar selects the model for this request;
+# one request can never invalidate another request's LLM instance.
+_llm_cache = {}
+_llm_tools_cache = {}
 
 def _get_llm():
-    global _llm, _llm_with_tools
-    if _llm is None:
-        model = _current_model_id.get()
-        api_key = _current_api_key.get()
-        base_url = _current_base_url.get()
-        _llm = ChatOpenAI(
+    model = _current_model_id.get()
+    if model not in _llm_cache:
+        cfg = AVAILABLE_MODELS[model]
+        _llm_cache[model] = ChatOpenAI(
             model=model,
-            api_key=api_key,
-            base_url=base_url,
+            api_key=cfg["api_key"],
+            base_url=cfg["base_url"],
             temperature=0.1,
             max_retries=0,
-            timeout=60,
+            timeout=45,
         )
-        _llm_with_tools = _llm.bind_tools(TOOLS)
-    return _llm, _llm_with_tools
+        _llm_tools_cache[model] = _llm_cache[model].bind_tools(TOOLS)
+    return _llm_cache[model], _llm_tools_cache[model]
 
 
 # ──────────────────────────────────────────────
@@ -239,9 +238,9 @@ def agent_node(state: AgentState) -> dict:
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     system_prompt = f"当前真实时间：{now_str}\n\n{system_prompt}"
 
-    # Add context from previous tool calls
-    ctx_ip = state.get("last_ip", "") or _extract_context_from_messages(messages)[0]
-    ctx_project = state.get("last_project", "") or _extract_context_from_messages(messages)[1]
+    # Request-scoped context takes precedence; legacy last_* is fallback only.
+    ctx_ip = state.get("request_ip", "") or state.get("last_ip", "")
+    ctx_project = state.get("request_project", "") or state.get("last_project", "")
     if ctx_ip or ctx_project:
         ctx_parts = []
         if ctx_ip:
@@ -349,8 +348,10 @@ def update_context_node(state: AgentState) -> dict:
     updates = {}
     if ip:
         updates["last_ip"] = ip
+        updates["request_ip"] = ip
     if project:
         updates["last_project"] = project
+        updates["request_project"] = project
     return updates
 
 
