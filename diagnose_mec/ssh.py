@@ -278,6 +278,125 @@ def ping_host(host_ip: str, count: int = 2, timeout: int = 3) -> tuple[bool, str
         return False, "不可达 (ping超时)"
 
 
+async def async_ssh_exec(host_ip: str, port: int, user: str, command: str, exec_timeout: int = 30, password: str = "") -> tuple:
+    """Non-blocking adapter for synchronous SSH operations used by HTTP handlers."""
+    return await asyncio.to_thread(
+        ssh_exec, host_ip, port, user, command, exec_timeout, password
+    )
+
+
+def resolve_device_access(host_ip: str) -> dict:
+    """Resolve one usable access path without equating physical SSH with device reachability.
+
+    Access priority:
+      1. physical-host SSH
+      2. direct container SSH :10022
+      3. physical-host docker exec
+    """
+    result = {
+        "device_reachable": False,
+        "physical_ssh": False,
+        "container_ssh": False,
+        "docker_exec": False,
+        "access_mode": "none",
+        "physical_user": "",
+        "login_method": "",
+        "ssh_password": "",
+        "container_password": "",
+        "error": "",
+    }
+
+    physical_user, login_method = find_physical_user(host_ip)
+    if physical_user:
+        result.update({
+            "device_reachable": True,
+            "physical_ssh": True,
+            "physical_user": physical_user,
+            "login_method": login_method,
+        })
+        if login_method == "password":
+            creds = _get_device_credentials(host_ip)
+            result["ssh_password"] = creds.get("pm_password") or creds.get("password", "")
+        else:
+            result["ssh_password"] = ""
+
+        # Prefer the direct container path when available; otherwise keep
+        # physical SSH + docker exec as a valid container execution path.
+        out, err, rc = ssh_exec(
+            host_ip, CONTAINER_PORT, CONTAINER_USER, "echo 'OK'",
+            exec_timeout=6
+        )
+        if rc == 0 and "OK" in out:
+            result["container_ssh"] = True
+            result["access_mode"] = "direct_container"
+            result["container_password"] = ""
+            return result
+
+        creds = _get_device_credentials(host_ip)
+        cont_pass = creds.get("password", "")
+        if cont_pass:
+            out, err, rc = ssh_exec(
+                host_ip, CONTAINER_PORT, CONTAINER_USER, "echo 'OK'",
+                exec_timeout=6, password=cont_pass
+            )
+            if rc == 0 and "OK" in out:
+                result["container_ssh"] = True
+                result["access_mode"] = "direct_container"
+                result["container_password"] = cont_pass
+                return result
+
+        docker_cmd = _docker_cmd(
+            physical_user,
+            "docker exec dev bash -l -c 'echo OK' 2>&1"
+        )
+        out, err, rc = ssh_exec(
+            host_ip, 22, physical_user, docker_cmd,
+            exec_timeout=8, password=result["ssh_password"]
+        )
+        if rc == 0 and "OK" in out:
+            result["docker_exec"] = True
+            result["access_mode"] = "docker_exec"
+            return result
+
+        result["access_mode"] = "physical"
+        result["error"] = "物理机可达，但容器未建立访问路径"
+        return result
+
+    # Physical SSH failed. This is deliberately not a device-unreachable
+    # conclusion: try the container endpoint independently.
+    creds = _get_device_credentials(host_ip)
+    out, err, rc = ssh_exec(
+        host_ip, CONTAINER_PORT, CONTAINER_USER, "echo 'OK'",
+        exec_timeout=6
+    )
+    if rc == 0 and "OK" in out:
+        result.update({
+            "device_reachable": True,
+            "container_ssh": True,
+            "access_mode": "direct_container",
+        })
+        return result
+
+    cont_pass = creds.get("password", "")
+    if cont_pass:
+        out, err, rc = ssh_exec(
+            host_ip, CONTAINER_PORT, CONTAINER_USER, "echo 'OK'",
+            exec_timeout=6, password=cont_pass
+        )
+        if rc == 0 and "OK" in out:
+            result.update({
+                "device_reachable": True,
+                "container_ssh": True,
+                "access_mode": "direct_container",
+                "container_password": cont_pass,
+            })
+            return result
+
+    ping_ok, ping_info = ping_host(host_ip)
+    result["error"] = f"物理SSH失败、容器10022失败（Ping: {ping_info}）"
+    return result
+
+
 def find_physical_user(host_ip: str) -> tuple:
     """Find a usable physical-host SSH identity without a brittle banner gate.
 
