@@ -228,6 +228,10 @@ def route_request_node(state: AgentState) -> dict:
 
 
 def post_tool_router_node(state: AgentState) -> dict:
+    model_id = state.get("request_model") or ""
+    if model_id:
+        from llm_gateway import switch_model
+        switch_model(model_id)
     """Use the structured diagnosis result to deterministically decide on deep analysis."""
     if state.get("deep_analysis_done"):
         return {}
@@ -404,6 +408,7 @@ def agent_node(state: AgentState) -> dict:
             all_messages,
             with_tools=True,
             tools=selected_tools,
+            model_id=state.get("request_model") or None,
             timeout=45,
             max_tokens=4096,
             retry=1,
