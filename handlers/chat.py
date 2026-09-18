@@ -2,6 +2,7 @@ import json
 import asyncio
 import time
 import logging
+import uuid
 from aiohttp import web
 
 logger = logging.getLogger(__name__)
@@ -249,12 +250,19 @@ async def handle_chat_stream(request):
     )
     await response.prepare(request)
 
+    request_id = uuid.uuid4().hex
+    _disconnected = False
+
     async def _send(event_type: str, data: dict):
-        text = f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+        nonlocal _disconnected
+        payload = dict(data)
+        payload.setdefault("request_id", request_id)
+        text = f"event: {event_type}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
         try:
             await response.write(text.encode('utf-8'))
         except (ConnectionResetError, ConnectionAbortedError, RuntimeError):
-            pass
+            _disconnected = True
+            logger.info("客户端断开: request_id=%s session=%s", request_id, session_id)
 
     current_task = asyncio.current_task()
 
@@ -297,8 +305,6 @@ async def handle_chat_stream(request):
         last_user_msg = user_message
         last_ai_msg = ""
         drain_task = None
-        _disconnected = False
-
         from tools import set_diag_progress_callback, reset_diag_progress_callback
         progress_list = []
         def _on_diag_progress(name, status, detail):
