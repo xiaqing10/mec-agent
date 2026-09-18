@@ -21,7 +21,7 @@ def test_canonical_result_marks_unreachable():
         )
     )
     assert result["type"] == "diagnose_device_result"
-    assert result["next_action"] == "report"
+    assert result["next_action"] == "verify_access"
     assert result["access"]["device_reachable"] is False
 
 
