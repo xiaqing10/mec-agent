@@ -93,6 +93,14 @@ def test_webui_repairs_shifted_table_rows():
     assert "ip.trim()" in source
 
 
+def test_webui_repairs_glued_numbered_markdown_items():
+    source = WEBUI.read_text(encoding="utf-8")
+    assert "Numbered findings can arrive as" in source
+    assert "insert that whitespace only for bold-led" in source
+    assert "s = s.replace(/([^\\n])\\s*(\\d+[.)])(?=\\*\\*)/g, '$1\\n$2 ');" in source
+    assert "s = s.replace(/(^|\\n)(\\d+[.)])(?=\\*\\*)/g, '$1$2 ');" in source
+
+
 def test_webui_markdown_repair_declares_fence_regex():
     source = _read_webui()
     assert "var fenceRe = new RegExp(" in source
