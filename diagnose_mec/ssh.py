@@ -83,8 +83,18 @@ def ssh_exec(host_ip: str, port: int, user: str, command: str, exec_timeout: int
             finally:
                 client.close()
         except Exception as e:
-            logger.debug("Paramiko密码登录失败 %s@%s:%d - %s", user, host_ip, port, e)
-            return "", str(e), -1
+            # Paramiko can emit its own ERROR traceback for banner failures from
+            # its transport thread. Keep expected connection-path failures quiet
+            # here and expose one concise business-level warning instead.
+            error_text = str(e)
+            if "Error reading SSH protocol banner" in error_text:
+                logger.warning(
+                    "SSH连接未完成：%s@%s:%d 未收到SSH协议Banner，将继续尝试其他访问路径",
+                    user, host_ip, port,
+                )
+            else:
+                logger.debug("Paramiko密码登录失败 %s@%s:%d - %s", user, host_ip, port, e)
+            return "", error_text, -1
 
     cmd = [
         SSH_CMD,
