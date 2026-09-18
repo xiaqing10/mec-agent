@@ -18,77 +18,6 @@ SELF_AGENT_DIR = Path(__file__).parent
 LLM_PENDING_DIR = SELF_AGENT_DIR / "diagnose_logs" / "llm_pending"
 
 
-def should_need_llm(diagnosis_result):
-    diagnosis = diagnosis_result.get('diagnosis', {})
-    diag_type = diagnosis_result.get('type', '')
-    issue = diagnosis.get('issue', '')
-
-    if 'error' in diagnosis:
-        clear_errors = ['物理机无法连接']
-        if any(ce in diagnosis['error'] for ce in clear_errors):
-            return False
-        return True
-
-    if diag_type == 'container_offline':
-        clear_issues = ['Docker服务未运行', 'dev容器不存在', '容器未运行',
-                        'docker exec失败', '容器SSH无法连接', '容器内SSH服务不可连接']
-        if any(ci in issue for ci in clear_issues):
-            return False
-        return True
-
-    if diag_type == 'zero_images':
-        clear_issues = ['进程异常:', 'roscore未运行', 'supervisorctl status无输出',
-                        '驱动没有加载', 'ROS环境异常', '设备已恢复正常']
-        if any(ci in issue for ci in clear_issues):
-            return False
-        error_category = diagnosis.get('error_category', '')
-        if error_category and error_category != 'process':
-            return False
-        if '日志错误' in issue:
-            log_errors = diagnosis.get('log_errors', {})
-            for proc_name, info in log_errors.items():
-                errors = info.get('errors', [])
-                for err in errors:
-                    err_lower = err.lower()
-                    if any(kw in err_lower for kw in ['host is unreachable', 'cnrterror',
-                                                        'get current device failed', 'card : none']):
-                        return False
-            return True
-        vague_issues = ['topic无数据', '但所有topic无数据', 'topic有数据，但图片为0',
-                       'rostopic list无输出', '无image相关topic']
-        if any(vi in issue for vi in vague_issues):
-            return True
-        if '容器SSH无法连接' in issue:
-            return False
-        return True
-
-    return False
-
-
-def write_llm_pending(diagnosis_result, diag_type, device_info):
-    LLM_PENDING_DIR.mkdir(parents=True, exist_ok=True)
-    ip = device_info.get('ip', diagnosis_result.get('host', ''))
-    device_name = device_info.get('name', diagnosis_result.get('device_name', ''))
-    project = device_info.get('project', diagnosis_result.get('project', ''))
-
-    pending_data = {
-        "ip": ip,
-        "device_name": device_name,
-        "project": project,
-        "diag_type": diag_type,
-        "code_diagnosis": diagnosis_result,
-        "need_llm_reason": diagnosis_result.get('diagnosis', {}).get('issue', '未知'),
-        "pending_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    }
-
-    filename = f"{ip}_{diag_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    filepath = LLM_PENDING_DIR / filename
-
-    with open(filepath, 'w') as f:
-        json.dump(pending_data, f, ensure_ascii=False, indent=2)
-    return filepath
-
-
 def fetch_mec_report_from_feishu():
     sys.path.insert(0, str(SELF_AGENT_DIR))
     from mec_analyze import fetch_latest_mec_message, extract_timestamp
@@ -212,116 +141,86 @@ def _parse_json_devices(line):
         return []
 
 
-def diagnose_device(diag_type, device_info):
-    from diagnose_mec import diagnose_container_offline, diagnose_zero_images
-    device_name = device_info.get('name', '')
-    ip = device_info.get('ip', '')
-    project = device_info.get('project', '')
+def diagnose_device(device_info):
+    """Run the exact same single-device pipeline as the interactive Agent."""
+    from tools import mec_diagnose_device, mec_llm_diagnose_device
+    from diagnosis_router import route_device_result, parse_result
+
+    device_name = device_info.get("name", "")
+    ip = device_info.get("ip", "")
+    project = device_info.get("project", "")
 
     if not ip:
         return {
-            "host": "", "device_name": device_name, "project": project,
-            "type": diag_type, "diagnosis": {"error": "IP地址为空"}, "recommendations": []
+            "schema_version": "1.0", "type": "diagnose_device_result",
+            "status": "warning", "stage": "basic",
+            "entity": {"ip": "", "project": project},
+            "ip": "", "project": project, "root_cause": "missing_ip",
+            "next_action": "ask_user", "deep_analysis_recommended": False,
+            "error": "IP地址为空", "device_name": device_name,
         }
 
     try:
-        if diag_type == "container_offline" or diag_type == "physical_offline":
-            result = diagnose_container_offline(ip, project=project)
-        elif diag_type == "zero_images":
-            result = diagnose_zero_images(ip, project=project)
-        else:
-            return {"host": ip, "device_name": device_name, "project": project,
-                    "type": diag_type, "diagnosis": {"error": f"未知诊断类型: {diag_type}"}, "recommendations": []}
+        raw = mec_diagnose_device.invoke({"ip": ip, "project": project})
+        result = parse_result(raw)
+        if not result:
+            result = {
+                "schema_version": "1.0", "type": "diagnose_device_result",
+                "status": "warning", "stage": "basic",
+                "entity": {"ip": ip, "project": project},
+                "ip": ip, "project": project,
+                "root_cause": "invalid_tool_result",
+                "next_action": "report", "deep_analysis_recommended": False,
+                "error": "mec_diagnose_device 返回了无法解析的结果",
+            }
+    except Exception as exc:
+        result = {
+            "schema_version": "1.0", "type": "diagnose_device_result",
+            "status": "warning", "stage": "basic",
+            "entity": {"ip": ip, "project": project},
+            "ip": ip, "project": project,
+            "root_cause": "diagnosis_execution_failed",
+            "next_action": "report", "deep_analysis_recommended": False,
+            "error": str(exc)[:500],
+        }
 
-        if isinstance(result, dict):
-            result["device_name"] = device_name
-            result["project"] = project
-        return result
+    result["device_name"] = device_name
+    result["project"] = result.get("project") or project
+    result["entity"] = {"ip": result.get("ip") or ip, "project": result.get("project") or project}
 
-    except Exception as e:
-        return {"host": ip, "device_name": device_name, "project": project,
-                "type": diag_type, "diagnosis": {"error": str(e)}, "recommendations": []}
+    return route_device_result(
+        result,
+        deep_analysis_invoke=lambda target_ip, target_project: mec_llm_diagnose_device.invoke({
+            "ip": target_ip, "project": target_project
+        }),
+    )
+def build_dingtalk_message(results, project_name):
+    """Render canonical device diagnosis results for the project report."""
+    message = f"## 设备诊断-项目: {project_name}\\n\\n"
+    message += f"**诊断时间**: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}\\n\\n"
+    if not results:
+        return message + "项目当前无异常设备，无需诊断。"
 
-
-def build_dingtalk_message(container_offline_results, zero_images_results, project_name, recovered_results=None):
-    message = f"## 设备诊断-项目: {project_name}\n\n"
-    message += f"**诊断时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-
-    if container_offline_results:
-        message += f"### \U0001f527 容器离线诊断 ({len(container_offline_results)}台)\n\n"
-        for r in container_offline_results:
-            ip = r.get('host', '')
-            device_id = r.get('device_name', '未知')
-            diagnosis = r.get('diagnosis', {})
-            message += f"**{device_id} ({ip})**\n"
-            if 'error' in diagnosis:
-                message += f"\u274c 错误: {diagnosis['error']}\n"
-            else:
-                for key in ['physical_machine', 'docker_service', 'container_exec', 'container_ssh_connect']:
-                    val = diagnosis.get(key, '')
-                    if val:
-                        message += f"- {key}: {val}\n"
-                issue = diagnosis.get('issue', '')
-                if issue:
-                    message += f"- **问题**: {issue}\n"
-            message += "\n"
-
-    if zero_images_results:
-        message += f"### \U0001f4f7 图片为0诊断 ({len(zero_images_results)}台)\n\n"
-        for r in zero_images_results:
-            ip = r.get('host', '')
-            device_id = r.get('device_name', '未知')
-            diagnosis = r.get('diagnosis', {})
-            message += f"**{device_id} ({ip})**\n"
-            if 'error' in diagnosis:
-                message += f"\u274c 错误: {diagnosis['error']}\n"
-            else:
-                issue = diagnosis.get('issue', '')
-                if issue:
-                    message += f"- **问题**: {issue}\n"
-                supervisor = diagnosis.get('supervisor', {})
-                if supervisor and supervisor.get('abnormal', 0) > 0:
-                    abnormals = diagnosis.get('abnormal_processes', [])
-                    for p in abnormals[:5]:
-                        message += f"  - {p.get('name','')}: {p.get('status','')}\n"
-                log_errors = diagnosis.get('log_errors', {})
-                if log_errors:
-                    for proc_name, info in log_errors.items():
-                        errors = info.get('errors', [])
-                        if errors:
-                            message += f"  - {proc_name}: {errors[0][:80]}\n"
-            message += "\n"
-
-    if recovered_results:
-        message += f"### ✅ 已恢复设备 ({len(recovered_results)}台)\n\n"
-        for r in recovered_results:
-            ip = r.get('host', '')
-            device_id = r.get('device_name', '未知')
-            diagnosis = r.get('diagnosis', {})
-            message += f"**{device_id} ({ip})**\n"
-            today_count = diagnosis.get('today_image_count', 0)
-            message += f"- 📸 今日图片: {today_count} 张\n"
-            latest_time = diagnosis.get('latest_image_time', '')
-            latest_file = diagnosis.get('latest_image_file', '')
-            if latest_time:
-                message += f"- 🕐 最新图片: {latest_time}\n"
-            if latest_file:
-                message += f"- 📄 最新文件: {latest_file}\n"
-            supervisor_output = diagnosis.get('supervisor_output', '')
-            if supervisor_output:
-                message += f"- ⚙️ 进程状态:\n"
-                for line in supervisor_output.split('\n')[:10]:
-                    line = line.strip()
-                    if line:
-                        message += f"  {line}\n"
-            issue = diagnosis.get('issue', '')
-            if issue:
-                message += f"- ℹ️ {issue}\n"
-            message += "\n"
-
+    for r in results:
+        ip = r.get("ip", r.get("entity", {}).get("ip", ""))
+        name = r.get("device_name", "未知")
+        message += f"### {name} ({ip})\\n"
+        message += f"- 状态: {r.get("status", r.get("overall", "warning"))}\\n"
+        if r.get("root_cause"):
+            message += f"- 根因: {r["root_cause"]}\\n"
+        for item in (r.get("evidence") or [])[:5]:
+            if isinstance(item, dict):
+                label = item.get("dimension", item.get("name", "证据"))
+                detail = item.get("detail", item.get("value", ""))
+                message += f"- 证据: {label} — {detail}\\n"
+        deep = r.get("deep_analysis")
+        if isinstance(deep, dict) and deep.get("analysis"):
+            analysis = str(deep["analysis"]).replace("\\n", " ").strip()
+            message += f"- 深度分析: {analysis[:500]}\\n"
+        if r.get("error"):
+            message += f"- 错误: {str(r["error"])[:300]}\\n"
+        message += "\\n"
     return message
-
-
 def diagnose_project(project_name):
     """诊断指定项目的所有异常设备。
 
@@ -402,39 +301,37 @@ def diagnose_project(project_name):
         result_summary["dingtalk_message"] = f"## {project_name}\n\n项目当前无异常设备，无需诊断。"
         return result_summary
 
+    # 这里只发现候选设备；实际诊断全部统一走 mec_diagnose_device。
+    candidates = []
+    seen_ips = set()
+    for source_devices in (container_offline_devices, zero_images_devices, physical_offline_devices):
+        for device in source_devices:
+            ip = device.get("ip", "")
+            if not ip or ip in seen_ips:
+                continue
+            seen_ips.add(ip)
+            candidate = dict(device)
+            candidate["project"] = project_name
+            candidates.append(candidate)
+
     project_results = []
     total_need_llm = 0
-
-    for device in container_offline_devices:
-        result = diagnose_device("container_offline", device)
+    for device in candidates:
+        result = diagnose_device(device)
         project_results.append(result)
-        if should_need_llm(result):
-            write_llm_pending(result, "container_offline", device)
+        if result.get("deep_analysis"):
             total_need_llm += 1
+    container_results = [
+        r for r in project_results
+        if r.get("status") in ("error", "warning")
+    ]
+    zero_results = [
+        r for r in project_results
+        if r.get("root_cause") in ("zero_images", "topic_all_zero", "topic_partial_zero")
+    ]
+    recovered_results = [r for r in project_results if r.get("status") == "normal"]
 
-    for device in zero_images_devices:
-        result = diagnose_device("zero_images", device)
-        project_results.append(result)
-        if should_need_llm(result):
-            write_llm_pending(result, "zero_images", device)
-            total_need_llm += 1
-
-    for device in physical_offline_devices:
-        result = diagnose_device("physical_offline", device)
-        project_results.append(result)
-        if should_need_llm(result):
-            write_llm_pending(result, "physical_offline", device)
-            total_need_llm += 1
-
-    container_results = [r for r in project_results if r.get('type') in ('container_offline', 'physical_offline')
-                         and '正常' not in r.get('diagnosis', {}).get('issue', '')]
-    zero_results = [r for r in project_results if r.get('type') == 'zero_images'
-                    and '正常' not in r.get('diagnosis', {}).get('issue', '')
-                    and '已恢复正常' not in r.get('diagnosis', {}).get('issue', '')]
-    recovered_results = [r for r in project_results if r.get('type') == 'zero_images'
-                         and '已恢复正常' in r.get('diagnosis', {}).get('issue', '')]
-
-    dingtalk_msg = build_dingtalk_message(container_results, zero_results, project_name, recovered_results)
+    dingtalk_msg = build_dingtalk_message(project_results, project_name)
 
     result_summary["success"] = True
     result_summary["total_diagnosed"] = len(project_results)
