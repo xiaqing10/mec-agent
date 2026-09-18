@@ -22,7 +22,31 @@ def mec_diagnose_project(project: str) -> str:
         return json.dumps({"error": "未指定项目名"}, ensure_ascii=False)
 
     result = run_diagnose(project)
-    return json.dumps(result, ensure_ascii=False)
+    result_count = len(result.get("results", [])) if isinstance(result, dict) else 0
+    need_llm = int(result.get("need_llm", 0)) if isinstance(result, dict) else 0
+    failed = not bool(result.get("success", False)) if isinstance(result, dict) else True
+    status = "error" if failed else ("warning" if need_llm else "normal")
+    structured = {
+        "schema_version": "1.0",
+        "type": "project_diagnosis_result",
+        "status": status,
+        "stage": "basic",
+        "entity": {"project": project},
+        "project": project,
+        "root_cause": "",
+        "root_cause_confidence": None,
+        "evidence": [],
+        "symptoms": [],
+        "impact": [],
+        "recommendations": [],
+        "next_action": "deep_analysis" if need_llm else "report",
+        "deep_analysis_recommended": bool(need_llm),
+        "summary_for_llm": f"项目 {project} 已诊断 {result_count} 台设备" + (f"，{need_llm} 台需要进一步分析" if need_llm else "，当前无需额外深度分析"),
+        "results": result.get("results", []) if isinstance(result, dict) else [],
+        "report": result.get("dingtalk_message", "") if isinstance(result, dict) else "",
+        "raw_summary": result,
+    }
+    return json.dumps(structured, ensure_ascii=False)
 
 
 @tool
