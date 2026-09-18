@@ -572,6 +572,13 @@ function repairFlattenedMarkdown(text) {
     return prefix + marker;
   });
 
+  // Normalize separator rows that use typographic dashes (—/–/－) instead
+  // of the ASCII hyphens required by Markdown table syntax. Only touch rows
+  // whose cells contain dashes and pipe boundaries, so normal prose/data is safe.
+  s = s.replace(/(^|\n)(\|[ \\t]*(?:[-—–－]+[ \\t]*\|)+[ \\t]*)$/gm, function(_, prefix, row) {
+    return prefix + row.replace(/[-—–－]+/g, '---');
+  });
+
   // Some model responses escape table pipes as \\|. Unescape only when the
   // surrounding text has an unmistakable table-like pipe structure.
   var tableLike = /(^|\n|#{2,6}\s[^\n]*)[^\n]*\\|[^\n]*(?:\|[^\n]*){2,}/;
