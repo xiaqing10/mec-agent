@@ -37,16 +37,18 @@ from handlers.memory import (
     handle_memory_create, handle_memory_update, handle_memory_delete,
 )
 from webui import handle_webui, handle_static
-from handlers.chat import get_agent, _agent_init_time_since_init, _agent
+from handlers.chat import get_agent
 from config import EVENT_IMAGE_TEMP_DIR, EVENT_IMAGE_TTL_HOURS
 
 
 async def handle_health(request):
+    from importlib import import_module
+    chat_handler = import_module("handlers.chat")
     return web.json_response({
         "status": "ok",
         "service": "traffic-domain-agent-langgraph",
-        "agent_initialized": _agent is not None,
-        "init_time_s": _agent_init_time_since_init[0]
+        "agent_initialized": chat_handler._agent is not None,
+        "init_time_s": chat_handler._agent_init_time_since_init[0]
     })
 
 
@@ -61,16 +63,21 @@ async def handle_version(request):
 async def handle_clear_session(request):
     body = await _parse_body(request) or {}
     session_id = body.get("session_id", "default")
+    if not session_id:
+        return web.json_response({"success": False, "error": "session_id不能为空"}, status=400)
     try:
-        from langchain_core.messages import HumanMessage
-        agent = await get_agent()
-        config = {"configurable": {"thread_id": session_id}}
-        await agent.ainvoke(
-            {"messages": [], "last_ip": "", "last_project": ""},
-            config
-        )
+        from importlib import import_module
+        chat_handler = import_module("handlers.chat")
+        await get_agent()
+        ctx = getattr(chat_handler, "_agent_checkpointer_ctx", None)
+        if ctx:
+            checkpointer, _ = ctx
+            await checkpointer.adelete_thread(session_id)
+        chat_handler._active_runs.pop(session_id, None)
+        chat_handler._session_locks.pop(session_id, None)
         return web.json_response({"success": True, "message": f"会话 {session_id} 已清除"})
     except Exception as e:
+        logger.exception("清除会话失败: %s", session_id)
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
