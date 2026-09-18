@@ -42,6 +42,8 @@ def get_model_config(model_id: str | None = None) -> dict:
     cfg = AVAILABLE_MODELS.get(mid)
     if not cfg:
         raise LLMGatewayError(f"未知模型: {mid}", kind="configuration")
+    if not str(cfg.get("api_key", "")).strip():
+        raise LLMGatewayError(f"模型 {mid} 未配置 API Key，请设置对应环境变量", kind="configuration")
     return cfg
 
 
