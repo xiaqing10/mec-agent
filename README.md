@@ -321,7 +321,7 @@ LangGraph 当前使用 `AsyncSqliteSaver` 持久化会话状态；SQLite checkpo
 
 ## Web UI 渲染与连续对话可靠性
 
-前端聊天消息统一通过内置 `markdown-it` 渲染，支持标题、段落、列表、代码块、引用和表格；SSE/LLM 偶尔返回的转义换行（`\\n`）会在 Markdown 解析前规范化，避免内容挤成一团。工具返回结果也复用同一 Markdown 渲染链路。
+前端聊天消息统一通过内置 `markdown-it` 渲染，支持标题、段落、列表、代码块、引用和表格；SSE/LLM 偶尔返回的转义换行（`\\n`）会在 Markdown 解析前规范化，避免内容挤成一团。针对上游把表格管道符输出成 `\\|`、同时把表格行压成 `||` 的情况，`repairFlattenedMarkdown()` 只在检测到明确表格结构时恢复 `|` 与行边界，并保护 fenced code block 不被改写。工具返回结果也复用同一 Markdown 渲染链路。
 
 连续对话使用两层防护：浏览器端保存当前 SSE `AbortController` 并在成功、超时、取消、网络异常等所有出口清理，发送按钮不会永久处于禁用状态；服务端以每个 `session_id` 的 `asyncio.Lock` 作为会话串行化唯一事实来源，只有真正拿到锁后才登记 `_active_runs`，请求结束/取消时在 `finally` 释放锁并清理运行标记，避免上一轮残留状态导致下一轮被误判为 busy。
 
