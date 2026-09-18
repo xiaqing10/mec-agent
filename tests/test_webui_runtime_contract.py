@@ -25,3 +25,9 @@ def test_webui_always_clears_stream_controller():
 def test_webui_does_not_restore_stale_stream_controller_after_send():
     source = WEBUI.read_text(encoding="utf-8")
     assert "window._streamController = controller;\n}\n\nvar currentRating" not in source
+
+
+def test_shared_diagnostic_helpers_import_json_for_serialization():
+    source = (WEBUI.parents[0] / "tools" / "_shared.py").read_text(encoding="utf-8")
+    assert "import json" in source
+    assert "return json.dumps(finalize_summary(result), ensure_ascii=False)" in source
