@@ -44,8 +44,12 @@ def route_device_result(result: dict, *, deep_analysis_invoke: Callable[[str, st
             routed["deep_analysis_recommended"] = False
         else:
             routed["deep_analysis_error"] = "深度分析返回了无法解析的结果"
+            routed["deep_analysis_recommended"] = False
+            routed["next_action"] = "report"
     except Exception as exc:
         routed["deep_analysis_error"] = str(exc)[:500]
+        routed["deep_analysis_recommended"] = False
+        routed["next_action"] = "report"
     return routed
 
 __all__ = ["parse_result", "should_run_deep_analysis", "route_device_result"]
