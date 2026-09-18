@@ -565,6 +565,7 @@ function repairFlattenedMarkdown(text) {
   // Protect fenced code blocks so table/list repairs never alter code.
   var fenced = [];
   var fenceChar = String.fromCharCode(96);
+  var fenceRe = new RegExp('(^|\\n)(' + fenceChar + fenceChar + fenceChar + '[^\\n]*\\n[\\s\\S]*?' + fenceChar + fenceChar + fenceChar + ')(?=\\n|$)', 'gm');
   s = s.replace(fenceRe, function(_, prefix, block) {
     var marker = '__MD_FENCE_' + fenced.length + '__';
     fenced.push(block);
@@ -575,7 +576,7 @@ function repairFlattenedMarkdown(text) {
   // surrounding text has an unmistakable table-like pipe structure.
   var tableLike = /(^|\n|#{2,6}\s[^\n]*)[^\n]*\\|[^\n]*(?:\|[^\n]*){2,}/;
   if (tableLike.test(s)) {
-    s = s.replace(/\\\\\|/g, '|');
+    s = s.replace(/\\\|/g, '|');
     // Flattened tables commonly collapse row boundaries into double pipes.
     s = s.replace(/\|\|/g, '|\n|');
   }
