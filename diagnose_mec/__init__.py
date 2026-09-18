@@ -4,7 +4,7 @@ from pathlib import Path
 from datetime import datetime
 
 from .ssh import (
-    ssh_exec, _combined_ssh, _docker_cmd, _docker_exec_cmd,
+    ssh_exec, async_ssh_exec, resolve_device_access, _combined_ssh, _docker_cmd, _docker_exec_cmd,
     _get_device_credentials, find_physical_user, ping_host,
     SSH_CMD, SSH_KEY, CONTAINER_PORT, CONTAINER_USER, PHYSICAL_USERS,
     SUDO_USERS, ROS_ENV_CMD,
@@ -66,7 +66,7 @@ def _resolve_device(query: str, project: str = "") -> tuple:
 
 
 __all__ = [
-    "ssh_exec", "_combined_ssh", "_docker_cmd", "_docker_exec_cmd",
+    "ssh_exec", "async_ssh_exec", "resolve_device_access", "_combined_ssh", "_docker_cmd", "_docker_exec_cmd",
     "_get_device_credentials", "find_physical_user", "ping_host",
     "_parse_ssh_failure_reason", "_load_diagnostic_patterns",
     "_parse_supervisor_status", "_format_abnormal_summary",
