@@ -86,6 +86,33 @@ def mec_diagnose_device(ip: str, project: str = "") -> str:
 
     container_ok = False
 
+    # container_status may be populated even when the container is stopped.
+    # Treat an explicit stopped/missing dev container as an error before the
+    # generic status string check.
+    if dev_cont and "未运行" in dev_cont:
+        problem, detail = "dev_container_stopped", f"dev容器存在但未运行（{dev_cont}）"
+        _notify_progress("容器", "error", detail)
+        dimensions.append({"name": "容器", "status": "error", "detail": detail, "problem": problem})
+        for dim_name in ["进程", "主题+日志", "今日事件数"]:
+            dimensions.append({"name": dim_name, "status": "skip", "detail": "容器不可达，跳过"})
+        si = get_sensor_status(ip)
+        if si and (si.get("cameras") or si.get("radars")):
+            cam, rad = si.get("total_cameras", 0), si.get("total_radars", 0)
+            cam_off, rad_off = si.get("offline_cameras", 0), si.get("offline_radars", 0)
+            sensor_detail = f"摄像头 {cam - cam_off}/{cam}, 雷达 {rad - rad_off}/{rad}"
+            sensor_status = "warning" if (cam_off > 0 or rad_off > 0) else "ok"
+            dimensions.append({"name": "传感器", "status": sensor_status, "detail": sensor_detail})
+        else:
+            dimensions.append({"name": "传感器", "status": "skip", "detail": "无传感器数据"})
+        db_info = get_device_db_info(ip)
+        db_detail = format_device_db_info(db_info)
+        if db_detail:
+            dimensions.append({"name": "数据库记录", "status": "warning", "detail": db_detail})
+        from ._diag_cache import cache_diag_data
+        cache_diag_data(ip, {"physical_user": cd.get("_login_user", ""), "login_method": cd.get("_login_method", ""),
+                              "ssh_password": cd.get("_ssh_password", ""), "container_unreachable": True})
+        return _build_diag_result(ip, dimensions, problem)
+
     if cs:
         container_detail = f"dev容器: {cs}"
         if cst:
@@ -117,7 +144,7 @@ def mec_diagnose_device(ip: str, project: str = "") -> str:
         cache_diag_data(ip, {"physical_user": cd.get("_login_user", ""), "login_method": cd.get("_login_method", ""),
                               "ssh_password": cd.get("_ssh_password", ""), "docker_unavailable": True})
         return _build_diag_result(ip, dimensions, problem)
-    elif dev_cont and ("不存在" in dev_cont or "未运行" in dev_cont):
+    elif dev_cont and "不存在" in dev_cont:
         if "不存在" in dev_cont:
             problem, detail = "dev_container_missing", f"dev容器不存在"
         else:
