@@ -62,14 +62,7 @@ API_KEY = os.getenv("SELF_AGENT_API_KEY", "")
 SSL_CERT = os.getenv("SSL_CERT", "")
 SSL_KEY = os.getenv("SSL_KEY", "")
 
-#LLM_API_KEY = "8668b8cf-f301-4ee5-b5c3-b43da332643b"
-#LLM_API_KEY = "a385d094-7f69-41e0-b3b8-6c773877e97b"
-#LLM_BASE_URL = "https://ark.cn-beijing.volces.com/api/coding/v3"
-#LLM_MODEL = "deepseek-v4-flash"
 
-#LLM_BASE_URL= "https://qianfan.baidubce.com/v2/coding"
-#LLM_API_KEY= "bce-v3/ALTAKSP-8rIUW18KeRfA0NloMkZvX/f8158fdb129ce95064be0550ec888e737416ba39"
-#LLM_MODEL = "deepseek-v4-flash"
 
 # 诊断日志目录
 DIAGNOSE_DIR = SELF_AGENT_DIR / "diagnose_logs"
