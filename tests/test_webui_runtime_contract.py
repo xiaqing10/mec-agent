@@ -4,12 +4,15 @@ from pathlib import Path
 WEBUI = Path(__file__).resolve().parents[1] / "webui.py"
 
 
-def test_webui_renders_markdown_and_normalizes_escaped_linebreaks():
+def test_webui_repairs_flattened_markdown_before_rendering():
     source = WEBUI.read_text(encoding="utf-8")
     assert "window.markdownit" in source
+    assert "function repairFlattenedMarkdown(text)" in source
     assert "function renderMD(text)" in source
-    assert ".replace(/\\\\n/g, '\\n')" in source
+    assert "text = repairFlattenedMarkdown(text);" in source
     assert "text = md.render(text)" in source
+    assert "([^\\n])\\s*(#{2,6}\\s+)" in source
+    assert "Markdown tables" in source
 
 
 def test_webui_always_clears_stream_controller():
