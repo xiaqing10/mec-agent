@@ -319,6 +319,11 @@ LangGraph 当前使用 `AsyncSqliteSaver` 持久化会话状态；SQLite checkpo
 5. 验证诊断链路后，再回收旧密钥及其备份。
 6. 如该旧私钥曾用于多个环境，应按环境分别检查并轮换，不能只处理当前测试机。
 
+## SSH 日志降噪与访问路径
+
+- Paramiko 的 `Error reading SSH protocol banner` 属于一次具体的 SSH 访问路径失败，但不等价于设备整体离线；当前诊断会继续尝试容器 SSH / docker exec 等备用路径。
+- 对预期的 Banner 建连失败不再重复输出 Paramiko 内部 ERROR traceback，而由业务层输出一条简洁的 WARNING，明确主机、端口和“继续尝试其他访问路径”的行为；其他非预期 Paramiko 异常仍保留 DEBUG 详细信息。
+
 ## Web UI 渲染与连续对话可靠性
 
 前端聊天消息统一通过内置 `markdown-it` 渲染，支持标题、段落、列表、代码块、引用和表格；SSE/LLM 偶尔返回的转义换行（`\\n`）会在 Markdown 解析前规范化，避免内容挤成一团。针对上游把表格管道符输出成 `\\|`、同时把表格行压成 `||` 的情况，`repairFlattenedMarkdown()` 只在检测到明确表格结构时恢复 `|` 与行边界，并保护 fenced code block 不被改写。工具返回结果也复用同一 Markdown 渲染链路。
