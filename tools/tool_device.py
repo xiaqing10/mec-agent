@@ -491,36 +491,35 @@ def mec_diagnose_device(ip: str, project: str = "") -> str:
 
 @tool
 def mec_device_info(ip: str, info_type: str = "disk") -> str:
-    """查询MEC设备的详细信息（硬盘、内存、CPU、网络、运行时间等）。
-
-    Args:
-        ip: 设备IP地址
-        info_type: 查询类型，多个用逗号分隔。可选值：
-            disk - 硬盘占用率
-            memory - 内存使用率
-            cpu - CPU使用率
-            network - 网络配置
-            uptime - 运行时间
-            history - 历史图片数据天数
-            示例："disk,memory" 同时查硬盘和内存
-    """
-    from diagnose_mec import ssh_exec, _docker_cmd, _docker_exec_cmd, _get_device_credentials, CONTAINER_PORT, CONTAINER_USER
-    from diagnose_mec import _resolve_device
+    """查询MEC设备详细指标。物理机SSH不可用时，优先使用已解析的容器访问路径。"""
+    import json
+    import re
+    from diagnose_mec import (
+        ssh_exec, _docker_exec_cmd, _resolve_device,
+        CONTAINER_PORT, CONTAINER_USER,
+    )
     from diagnose_mec.ssh import resolve_device_access
     from query_sensor_status import get_device_db_info, format_device_db_info
-    from ._diag_cache import get_diag_cache
 
     if not ip:
         return json.dumps({"error": "未指定设备IP"}, ensure_ascii=False)
 
     if not re.match(r'^\d+\.\d+\.\d+\.\d+$', ip):
-        resolved_ip, _ = _resolve_device(ip)
+        resolved_ip, dev_info = _resolve_device(ip)
+        if dev_info and dev_info.get("_ambiguous"):
+            return json.dumps({
+                "schema_version": "1.0",
+                "type": "device_info_result",
+                "status": "warning",
+                "entity": {"ip": ip},
+                "next_action": "ask_user",
+                "error": f"设备 '{ip}' 存在多个匹配，请指定项目或IP",
+            }, ensure_ascii=False)
         if resolved_ip != ip:
             ip = resolved_ip
+
     if not re.match(r'^\d+\.\d+\.\d+\.\d+$', ip):
         return json.dumps({"error": f"无法解析设备 '{ip}'"}, ensure_ascii=False)
-
-    info = {"ip": ip, "info_type": info_type, "access_mode": access_mode, "physical_ssh": physical_available}
 
     access = resolve_device_access(ip)
     physical_available = bool(access.get("physical_ssh"))
@@ -539,7 +538,7 @@ def mec_device_info(ip: str, info_type: str = "disk") -> str:
             "entity": {"ip": ip},
             "ip": ip,
             "next_action": "verify_access",
-            "access": access_mode,
+            "access_mode": access_mode,
             "info_type": info_type,
             "info": {},
             "error": f"设备 {ip} 没有可用访问路径",
@@ -548,91 +547,115 @@ def mec_device_info(ip: str, info_type: str = "disk") -> str:
             result["database"] = db_detail
         return json.dumps(result, ensure_ascii=False)
 
-    def _run_physical(command: str, exec_timeout: int = 8):
+    def run_physical(command: str, timeout: int = 8):
         if not physical_available:
             return "", "物理机SSH不可用", -1
         return ssh_exec(
             ip, 22, physical_user, command,
-            exec_timeout=exec_timeout, password=physical_password
+            exec_timeout=timeout, password=physical_password
         )
 
-    def _run_container(command: str, exec_timeout: int = 8):
+    def run_container(command: str, timeout: int = 8):
         if access_mode == "docker_exec":
             return _docker_exec_cmd(
                 ip, physical_user, command,
-                exec_timeout=exec_timeout, password=physical_password
+                exec_timeout=timeout, password=physical_password
             )
         return ssh_exec(
             ip, CONTAINER_PORT, CONTAINER_USER, command,
-            exec_timeout=exec_timeout, password=container_password
+            exec_timeout=timeout, password=container_password
         )
 
-    types = [t.strip() for t in info_type.split(",")] if info_type else ["disk"]
-    if not types:
-        types = ["disk"]
+    types = [t.strip() for t in (info_type or "disk").split(",") if t.strip()]
+    info = {
+        "ip": ip,
+        "info_type": info_type,
+        "access_mode": access_mode,
+        "physical_ssh": physical_available,
+    }
 
-    for t in types:
+    for t in types or ["disk"]:
+        primary = run_physical if physical_available else run_container
+
         if t == "disk":
-            stdout, _, _ = _run_physical("df -h / /home 2>/dev/null || df -h /", exec_timeout=8, password=physical_password)
-            info["disk"] = stdout.strip() if stdout.strip() else "无法获取"
-            cont_out, _, _ = _run_container("df -h / /home 2>/dev/null || df -h /", exec_timeout=8)
-            if cont_out.strip():
-                info["disk_container"] = cont_out.strip()
+            out, _, _ = primary("df -h / /home 2>/dev/null || df -h /")
+            info["disk" if physical_available else "disk_container"] = out.strip() or "无法获取"
+            if physical_available:
+                out2, _, _ = run_container("df -h / /home 2>/dev/null || df -h /")
+                if out2.strip():
+                    info["disk_container"] = out2.strip()
+
         elif t == "memory":
-            stdout, _, _ = _run_physical("free -h", exec_timeout=8, password=physical_password)
-            info["memory"] = stdout.strip() if stdout.strip() else "无法获取"
-            cont_out, _, _ = _run_container("free -h", exec_timeout=8)
-            if cont_out.strip():
-                info["memory_container"] = cont_out.strip()
+            out, _, _ = primary("free -h")
+            info["memory" if physical_available else "memory_container"] = out.strip() or "无法获取"
+            if physical_available:
+                out2, _, _ = run_container("free -h")
+                if out2.strip():
+                    info["memory_container"] = out2.strip()
+
         elif t == "cpu":
-            stdout, _, _ = _run_physical("top -bn1 | head -5", exec_timeout=8, password=physical_password)
-            info["cpu"] = stdout.strip() if stdout.strip() else "无法获取"
-            cont_out, _, _ = _run_container("top -bn1 | head -5", exec_timeout=8)
-            if cont_out.strip():
-                info["cpu_container"] = cont_out.strip()
+            out, _, _ = primary("top -bn1 | head -5")
+            info["cpu" if physical_available else "cpu_container"] = out.strip() or "无法获取"
+            if physical_available:
+                out2, _, _ = run_container("top -bn1 | head -5")
+                if out2.strip():
+                    info["cpu_container"] = out2.strip()
+
         elif t == "network":
-            stdout, _, _ = _run_physical("ip addr show | grep 'inet ' | awk '{print $2, $NF}'", exec_timeout=8, password=physical_password)
-            info["network"] = stdout.strip() if stdout.strip() else "无法获取"
+            out, _, _ = primary("ip addr show | grep 'inet ' | awk '{print $2, $NF}'")
+            info["network" if physical_available else "network_container"] = out.strip() or "无法获取"
+
         elif t == "uptime":
-            stdout, _, _ = _run_physical("uptime", exec_timeout=8, password=physical_password)
-            info["uptime"] = stdout.strip() if stdout.strip() else "无法获取"
+            out, _, _ = primary("uptime")
+            info["uptime" if physical_available else "uptime_container"] = out.strip() or "无法获取"
+
         elif t == "history":
             cmd = "ls -d /home/files/nfsroot/20[0-9][0-9]-[0-9][0-9]-[0-9][0-9] 2>/dev/null | sort"
-            stdout, _, _ = _run_physical(cmd, exec_timeout=8, password=physical_password)
-            if stdout.strip():
-                dirs = [d.strip().split('/')[-1] for d in stdout.strip().split('\n') if d.strip()]
+            out, _, _ = primary(cmd)
+            if out.strip():
+                dirs = [d.strip().split("/")[-1] for d in out.splitlines() if d.strip()]
                 import datetime
                 today_str = datetime.date.today().strftime("%Y-%m-%d")
-                day_details = []
+                counts = []
                 for d in dirs[:30]:
-                    count_cmd = f"ls /home/files/nfsroot/{d}/*.jpg 2>/dev/null | wc -l"
-                    cnt_out, _, _ = _run_physical(count_cmd, exec_timeout=5, password=physical_password)
-                    cnt = cnt_out.strip() if cnt_out.strip() else "0"
-                    marker = " (今天)" if d == today_str else ""
-                    day_details.append(f"  {d}: {cnt} 张{marker}")
-                total_days = len(dirs)
-                info["history"] = f"共 {total_days} 天数据\n" + "\n".join(day_details[-7:] if total_days > 7 else day_details)
+                    count_cmd = f"find /home/files/nfsroot/{d} -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) 2>/dev/null | wc -l"
+                    cnt_out, _, _ = primary(count_cmd)
+                    cnt = cnt_out.strip() or "0"
+                    suffix = " (今天)" if d == today_str else ""
+                    counts.append(f"{d}: {cnt} 张{suffix}")
+                info["history"] = f"共 {len(dirs)} 天数据\n" + "\n".join(counts[-7:])
             else:
-                cont_cmd = "ls -d /home/files/nfsroot/20[0-9][0-9]-[0-9][0-9]-[0-9][0-9] 2>/dev/null | sort | tail -10"
-                cont_out, _, _ = _run_container(cont_cmd, exec_timeout=8)
-                if cont_out.strip():
-                    dirs2 = [d.strip().split('/')[-1] for d in cont_out.strip().split('\n') if d.strip()]
-                    info["history"] = f"共 {len(dirs2)} 天数据（最近）: " + ", ".join(dirs2)
-                else:
-                    info["history"] = "无历史数据目录"
+                info["history"] = "无历史数据目录"
 
-    info_lines = [f"📊 设备 {ip} - {info_type}信息\n"]
-    labels = {"disk": "硬盘(物理机)", "disk_container": "硬盘(容器)",
-              "memory": "内存(物理机)", "memory_container": "内存(容器)",
-              "cpu": "CPU(物理机)", "cpu_container": "CPU(容器)",
-              "network": "网络(物理机)", "network_container": "网络(容器)", "uptime": "运行时间(物理机)", "uptime_container": "运行时间(容器)", "history": "历史数据"}
-    for key, val in info.items():
-        if key in ("ip", "info_type") or not val:
-            continue
-        label = labels.get(key, key)
-        info_lines.append(f"【{label}】\n{val}\n")
-
-    return "\n".join(info_lines)
+    labels = {
+        "disk": "硬盘(物理机)", "disk_container": "硬盘(容器)",
+        "memory": "内存(物理机)", "memory_container": "内存(容器)",
+        "cpu": "CPU(物理机)", "cpu_container": "CPU(容器)",
+        "network": "网络(物理机)", "network_container": "网络(容器)",
+        "uptime": "运行时间(物理机)", "uptime_container": "运行时间(容器)",
+        "history": "历史数据",
+    }
+    result = {
+        "schema_version": "1.0",
+        "type": "device_info_result",
+        "status": "normal",
+        "entity": {"ip": ip},
+        "ip": ip,
+        "access_mode": access_mode,
+        "physical_ssh": physical_available,
+        "info_type": info_type,
+        "metrics": {
+            key: value for key, value in info.items()
+            if key not in {"ip", "info_type", "access_mode", "physical_ssh"}
+        },
+        "summary_for_llm": "；".join(
+            f"{labels.get(k, k)}: {str(v)[:200]}"
+            for k, v in info.items()
+            if k not in {"ip", "info_type", "access_mode", "physical_ssh"} and v
+        ),
+        "next_action": "report",
+    }
+    return json.dumps(result, ensure_ascii=False)
 
 
 @tool
