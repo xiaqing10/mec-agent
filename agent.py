@@ -225,7 +225,7 @@ def agent_node(state: AgentState) -> dict:
 
 ## 3. 诊断流程
 - 单设备诊断优先 `mec_diagnose_device`，不要直接跳到LLM深度分析。
-- 仅当基础诊断结果明确表示根因不明确/需要进一步分析，再调用 `mec_llm_diagnose_device`。
+- 基础诊断返回结构化结果后，只在 `deep_analysis_recommended=true` 时调用 `mec_llm_diagnose_device`；不要自行猜测是否需要深度分析。
 - “物理机SSH不可用”不等于“设备不可达”；以诊断工具最终的设备/容器可达性为准。
 - 工具已经给出结构化诊断结果时，直接基于工具证据总结，不重新猜测。
 - 根因与症状必须分开；例如“图片为0”不应自动当作根因。
