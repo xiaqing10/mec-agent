@@ -570,13 +570,15 @@ function normalizeMarkdownText(text) {
   text = text
     .replace(/\s+(#{1,6})(?=\S)/g, '\n$1 ')
     .replace(/([^\n])(?=#{2,6}\S)/g, '$1\n')
-    .replace(/\s+(\|[-: ]{3,}\|)/g, '\n$1')
-    // Flattened tables join adjacent rows as "...|...||...|...".
-    // Only split double-pipes when a table separator is present.
-    .replace(/(\|[-: ]{3,}\|)[\s\S]*/g, function(table) {
-      return table.replace(/\|(?=\|)/g, '|\n');
-    })
-    .replace(/\s+(>\s)/g, '\n$1')
+    .replace(/(\|[-: ]{3,}\|)/g, '\n$1');
+
+  // Flattened tables join adjacent rows as "...|...||...|...".
+  // Once a Markdown table separator exists, split row boundaries.
+  if (/\|[-: ]{3,}\|/.test(text)) {
+    text = text.replace(/\|(?=\|)/g, '|\n');
+  }
+
+  text = text.replace(/\s+(>\s)/g, '\n$1')
     .replace(/\s+([-*+]\s+)/g, '\n$1')
     .replace(/\s+(\d+\.\s+)/g, '\n$1')
     .replace(/([。！？.!?—–])(?=#{1,6}\S)/g, '$1\n');
