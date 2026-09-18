@@ -557,7 +557,26 @@ var sessions = [];
 var currentSessionId = null;
 var loggedIn = false;
 
+function repairFlattenedMarkdown(text) {
+  if (!text || typeof text !== 'string') return text || '';
+  // Only repair unmistakable block-level Markdown markers when an upstream
+  // stream has collapsed real newlines. Normal prose is left untouched.
+  var s = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+  // Headings glued directly after prose or table rows.
+  s = s.replace(/([^\n])\s*(#{2,6}\s+)/g, '$1\n\n$2');
+
+  // Markdown tables: restore a lost newline before the separator row.
+  s = s.replace(/\|\s*([^\n|]+(?:\|[^\n|]+)+)\|\s*\|?\s*-{3,}/g, '|$1|\n|------');
+
+  // Common list markers glued to the previous sentence/row.
+  s = s.replace(/([^\n])\s+([-*]\s+|\d+[.)]\s+)/g, '$1\n$2');
+
+  return s;
+}
+
 function renderMD(text) {
+  text = repairFlattenedMarkdown(text);
   var html = md.render(text);
   // 用 highlight.js 高亮代码块
   var tmp = document.createElement('div');
