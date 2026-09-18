@@ -562,22 +562,25 @@ function normalizeMarkdownText(text) {
   if (typeof text !== 'string') text = String(text);
 
   // SSE JSON.parse normally restores real newlines, but some model/provider
-  // responses arrive with Markdown line boundaries flattened. In that case
-  // Markdown tables/headings become literal text (e.g. "|a|b||---|---|").
+  // responses arrive with Markdown line boundaries flattened.
   text = text.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n').replace(/\\t/g, '\t');
 
   // Restore only high-confidence Markdown boundaries. Do not globally insert
   // newlines after punctuation, which could alter ordinary prose.
   text = text
-    .replace(/\\s+(#{1,6})(?=\\S)/g, '\n$1 ')
-    .replace(/\\s+(\\|[-: ]{3,}\\|)/g, '\n$1')
-    .replace(/(\\|[^\\n]*\\|)(?=\\|)/g, '$1\n')
-    .replace(/\\s+(>\\s)/g, '\n$1')
-    .replace(/\\s+([-*+]\\s+)/g, '\n$1')
-    .replace(/\\s+(\\d+\\.\\s+)/g, '\n$1');
+    .replace(/\s+(#{1,6})(?=\S)/g, '\n$1 ')
+    .replace(/([^\n])(?=#{2,6}\S)/g, '$1\n')
+    .replace(/\s+(\|[-: ]{3,}\|)/g, '\n$1')
+    // Flattened tables join adjacent rows as "...|...||...|...".
+    // Only split double-pipes when a table separator is present.
+    .replace(/(\|[-: ]{3,}\|)[\s\S]*/g, function(table) {
+      return table.replace(/\|(?=\|)/g, '|\n');
+    })
+    .replace(/\s+(>\s)/g, '\n$1')
+    .replace(/\s+([-*+]\s+)/g, '\n$1')
+    .replace(/\s+(\d+\.\s+)/g, '\n$1')
+    .replace(/([。！？.!?—–])(?=#{1,6}\S)/g, '$1\n');
 
-  // A heading may be directly attached to the preceding sentence.
-  text = text.replace(/([。！？.!?])(?=#{1,6}\\S)/g, '$1\n');
   return text;
 }
 
