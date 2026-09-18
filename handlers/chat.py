@@ -11,7 +11,7 @@ _agent = None
 _agent_checkpointer_ctx = None
 _agent_lock = asyncio.Lock()
 _agent_init_time_since_init = [None]
-_active_runs: dict[str, asyncio.Task] = {}  # session_id -> Task
+_active_runs: dict[str, dict] = {}  # session_id -> {task, request_id}
 _session_locks: dict[str, asyncio.Lock] = {}
 _MAX_SESSION_LOCKS = 1000
 
@@ -270,9 +270,10 @@ async def handle_chat_stream(request):
 
     is_stop = any(kw in user_message for kw in _STOP_KEYWORDS)
     if is_stop:
-        old_task = _active_runs.pop(session_id, None)
+        run_info = _active_runs.get(session_id)
+        old_task = run_info.get("task") if run_info else None
         if old_task and not old_task.done():
-            logger.info("🛑 用户取消会话 %s 的进行中任务", session_id)
+            logger.info("🛑 用户取消会话 %s 的进行中任务 request_id=%s", session_id, run_info.get("request_id", ""))
             old_task.cancel()
         await _send("done", {"status": "stopped"})
         return response
@@ -282,7 +283,7 @@ async def handle_chat_stream(request):
         await _send("error", {"message": "当前会话已有请求正在处理，请等待完成后再发送。"})
         await _send("done", {"status": "busy"})
         return response
-    _active_runs[session_id] = current_task
+    _active_runs[session_id] = {"task": current_task, "request_id": request_id}
     acquired = False
 
     try:
@@ -477,7 +478,9 @@ async def handle_chat_stream(request):
             pass
         if acquired:
             lock.release()
-        _active_runs.pop(session_id, None)
+        current_run = _active_runs.get(session_id)
+        if current_run and current_run.get("task") is current_task:
+            _active_runs.pop(session_id, None)
 
     return response
 
@@ -513,7 +516,10 @@ async def handle_raw_diagnose(request):
     if not tool:
         return web.json_response({"success": False, "error": f"工具 {func_name} 未找到"}, status=500)
 
-    result = tool.invoke(params)
+    try:
+        result = await asyncio.to_thread(tool.invoke, params)
+    except asyncio.CancelledError:
+        raise
     if is_raw:
         return web.json_response({"success": True, "action": action, "data": {"result": result}})
     try:
