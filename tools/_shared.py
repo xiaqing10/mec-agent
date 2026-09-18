@@ -5,6 +5,7 @@ sessions cannot overwrite each other's callback.
 """
 
 from contextvars import ContextVar
+import json
 
 _diag_progress_callback = ContextVar("diag_progress_callback", default=None)
 
