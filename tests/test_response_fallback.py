@@ -40,3 +40,25 @@ def test_fallback_is_non_empty_and_contains_tools_and_errors():
 def test_fallback_does_not_call_a_model():
     text = build_deterministic_fallback([], tool_names=[], errors=[])
     assert text.startswith("本轮处理已完成")
+
+
+def test_empty_ai_content_requires_fallback():
+    from response_fallback import ensure_non_empty_response
+
+    messages = [
+        msg("human", "诊断设备"),
+        msg("tool", '{"error":"连接超时"}', name="mec_diagnose_device"),
+        msg("ai", "   "),
+    ]
+    fallback = ensure_non_empty_response(messages)
+    assert fallback is not None
+    assert fallback.strip()
+    assert "mec_diagnose_device" in fallback
+    assert "连接超时" in fallback
+
+
+def test_non_empty_ai_content_skips_fallback():
+    from response_fallback import ensure_non_empty_response
+
+    messages = [msg("human", "你好"), msg("ai", "你好，我在。")]
+    assert ensure_non_empty_response(messages) is None
