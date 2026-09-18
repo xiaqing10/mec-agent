@@ -339,3 +339,7 @@ LangGraph 当前使用 `AsyncSqliteSaver` 持久化会话状态；SQLite checkpo
 - 聊天消息继续使用原生 markdown-it 渲染链路，与 main 分支保持一致，不在前端擅自重写模型输出中的换行或 Markdown 语法。
 - Agent Prompt 明确要求模型保留真实 Markdown 换行、段落空行和标准表格语法，避免把回答压成单行或将表格列分隔符写成转义形式。
 - Web UI 页面响应使用 no-store / no-cache，避免浏览器继续使用旧版页面。
+
+### 设备工具 JSON 运行时保护
+
+`mec_diagnose_device` 与 `query_mec_device_from_db` 在工具函数内部使用局部 `json` 模块别名进行结果序列化，并配套源码回归测试，避免热重载/模块复用场景下出现 `NameError: name 'json' is not defined` 导致工具结果无法正常返回。部署代码变更后需要完整重启 Agent 进程，确保运行中的 Python 模块与当前分支代码一致。
