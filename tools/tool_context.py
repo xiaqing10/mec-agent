@@ -71,3 +71,42 @@ def resolve_mec_device(query: str, project: str = "") -> str:
         "candidates": [],
         "message": f"未找到设备 '{query}'" + (f"（项目：{project}）" if project else "")
     }, ensure_ascii=False)
+
+
+@tool
+def resolve_mec_project(query: str) -> str:
+    """将用户提供的项目名/别名解析为标准MEC项目名。
+
+    当项目名可能是口语、简称或无法确定是否为标准项目名时使用。
+    不要凭空猜测项目归属。
+    """
+    from config import KNOWN_PROJECTS
+
+    q = (query or "").strip()
+    if not q:
+        return json.dumps({"resolved": False, "error": "未提供项目名"}, ensure_ascii=False)
+
+    exact = [p for p in KNOWN_PROJECTS if p == q]
+    if len(exact) == 1:
+        return json.dumps({
+            "resolved": True, "project": exact[0], "candidates": exact
+        }, ensure_ascii=False)
+
+    normalized = q.replace("项目", "").strip()
+    candidates = [p for p in KNOWN_PROJECTS if normalized and (
+        normalized in p or p in normalized
+    )]
+
+    # Prefer an exact normalized match, otherwise return candidates.
+    if len(candidates) == 1:
+        return json.dumps({
+            "resolved": True, "project": candidates[0], "candidates": candidates
+        }, ensure_ascii=False)
+
+    return json.dumps({
+        "resolved": False,
+        "ambiguous": len(candidates) > 1,
+        "project": "",
+        "candidates": candidates,
+        "message": "项目名存在歧义，请使用标准项目名"
+    }, ensure_ascii=False)
