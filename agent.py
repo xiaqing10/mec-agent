@@ -163,30 +163,6 @@ def _extract_context_from_messages(messages: list) -> tuple:
 
 
 # ──────────────────────────────────────────────
-# LLM setup (lazy, avoid network calls at import time)
-# ──────────────────────────────────────────────
-# Per-model immutable cache. ContextVar selects the model for this request;
-# one request can never invalidate another request's LLM instance.
-_llm_cache = {}
-_llm_tools_cache = {}
-
-def _get_llm():
-    model = _current_model_id.get()
-    if model not in _llm_cache:
-        cfg = AVAILABLE_MODELS[model]
-        _llm_cache[model] = ChatOpenAI(
-            model=model,
-            api_key=cfg["api_key"],
-            base_url=cfg["base_url"],
-            temperature=0.1,
-            max_retries=0,
-            timeout=45,
-        )
-        _llm_tools_cache[model] = _llm_cache[model].bind_tools(TOOLS)
-    return _llm_cache[model], _llm_tools_cache[model]
-
-
-# ──────────────────────────────────────────────
 # Deterministic request/result routing
 # ──────────────────────────────────────────────
 
