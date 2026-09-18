@@ -23,7 +23,6 @@ def _get_session_lock(session_id: str) -> asyncio.Lock:
     return lock
 
 _STOP_KEYWORDS = ["/stop", "停止", "取消", "终止", "停下"]
-_MAX_MSG_CHARS = 40000
 
 
 async def get_agent():
@@ -110,30 +109,6 @@ def _extract_agent_reply(state: dict) -> str:
     return ""
 
 
-def _count_msg_chars(messages: list) -> int:
-    total = 0
-    for m in messages:
-        c = getattr(m, 'content', '') or ''
-        total += len(c) if isinstance(c, str) else sum(len(s) for s in c) if isinstance(c, list) else 0
-    return total
-
-
-def _trim_messages_for_llm(messages: list, max_chars: int = _MAX_MSG_CHARS) -> list:
-    total = _count_msg_chars(messages)
-    if total <= max_chars:
-        return messages
-    from langchain_core.messages import ToolMessage, HumanMessage, AIMessage
-    result = list(messages)
-    for i in range(len(result)):
-        m = result[i]
-        if not isinstance(m, ToolMessage):
-            continue
-        content = str(getattr(m, 'content', '') or '')
-        if len(content) > 200:
-            result[i] = ToolMessage(content=content[:200] + '...(截断)', tool_call_id=m.tool_call_id, name=m.name)
-    return result
-
-
 async def handle_chat(request):
     body = await _parse_body(request)
     if not body:
@@ -143,6 +118,8 @@ async def handle_chat(request):
     session_id = str(body.get("session_id") or "").strip()
     if not user_message:
         return web.json_response({"success": False, "error": "message字段不能为空"}, status=400)
+    if not session_id:
+        return web.json_response({"success": False, "error": "session_id不能为空，禁止使用公共default会话"}, status=400)
     if not session_id:
         return web.json_response({"success": False, "error": "session_id不能为空，禁止使用公共default会话"}, status=400)
 
@@ -158,8 +135,6 @@ async def handle_chat(request):
         set_current_user_id(username)
 
     lock = _get_session_lock(session_id)
-    if lock.locked():
-        return web.json_response({"success": False, "error": "当前会话已有请求正在处理，请等待完成后再发送。"}, status=409)
     acquired = False
     try:
         try:
@@ -172,7 +147,6 @@ async def handle_chat(request):
         config = {"configurable": {"thread_id": session_id}, "recursion_limit": 50}
 
         state = await agent.aget_state(config)
-        history = (state.values.get("messages", []) if state and state.values else [])
         from agent import extract_explicit_request_context
         req_project, req_ip = extract_explicit_request_context(user_message)
         final_state = await agent.ainvoke(
@@ -240,9 +214,11 @@ async def handle_chat_stream(request):
         return web.json_response({"success": False, "error": "请求体必须为JSON格式"}, status=400)
 
     user_message = body.get("message", "").strip()
-    session_id = body.get("session_id", "default")
+    session_id = str(body.get("session_id") or "").strip()
     if not user_message:
         return web.json_response({"success": False, "error": "message字段不能为空"}, status=400)
+    if not session_id:
+        return web.json_response({"success": False, "error": "session_id不能为空，禁止使用公共default会话"}, status=400)
 
     model_id = body.get("model", "")
     if model_id:
@@ -367,11 +343,9 @@ async def handle_chat_stream(request):
         req_project, req_ip = extract_explicit_request_context(user_message)
         async for event in agent.astream_events(
             {"messages": [HumanMessage(content=user_message)],
-             "request_project": req_project,
-             "request_ip": req_ip,
-             "request_model": model_id,
-             "last_project": req_project,
-             "last_ip": req_ip},
+             "request_project": req_project or None,
+             "request_ip": req_ip or None,
+             "request_model": model_id or None},
             config,
             version="v2"
         ):
