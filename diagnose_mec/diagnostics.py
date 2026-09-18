@@ -275,7 +275,7 @@ def diagnose_zero_images(host_ip: str, container_ssh_info=None, progress_cb=None
         docker_cmds = (
             "echo '===SUPERVISOR===' && supervisorctl status 2>&1; "
             "echo '===ROSCORE===' && ps -ef | grep roscore | grep -v grep || echo 'ROSCORE_NOT_RUNNING'; "
-            f"echo '===IMG_COUNT===' && ls /home/files/nfsroot/{today_str}/ 2>/dev/null | wc -l; "
+            f"echo '===IMG_COUNT===' && find /home/files/nfsroot/{today_str}/ -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) 2>/dev/null | wc -l; "
             f"echo '===IMG_INFO===' && ls -lt --time-style='+%Y-%m-%d %H:%M:%S' /home/files/nfsroot/{today_str}/ 2>/dev/null | head -2; "
             "echo '===GREP_CONF===' && grep -hE 'stdout_logfile=|stderr_logfile=' /etc/supervisor/conf.d/*.conf 2>/dev/null | sort -u"
         )
@@ -299,7 +299,7 @@ def diagnose_zero_images(host_ip: str, container_ssh_info=None, progress_cb=None
         combined = _combined_ssh(host_ip, CONTAINER_PORT, CONTAINER_USER, [
             ("SUPERVISOR", "supervisorctl status 2>&1"),
             ("ROSCORE", "ps -ef | grep roscore | grep -v grep"),
-            ("IMG_COUNT", f"ls /home/files/nfsroot/{today_str}/ 2>/dev/null | wc -l"),
+            ("IMG_COUNT", f"find /home/files/nfsroot/{today_str}/ -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) 2>/dev/null | wc -l"),
             ("IMG_INFO", f"ls -lt --time-style='+%Y-%m-%d %H:%M:%S' /home/files/nfsroot/{today_str}/ 2>/dev/null | head -2"),
             ("GREP_CONF", "grep -hE 'stdout_logfile=|stderr_logfile=' /etc/supervisor/conf.d/*.conf 2>/dev/null | sort -u"),
         ], exec_timeout=30, password=result.get("_exec_ctx", {}).get("ssh_password", ""))
@@ -932,7 +932,7 @@ def collect_device_raw_data(host_ip: str) -> dict:
     today_str = datetime.now().strftime("%Y-%m-%d")
     ctn_data = _combined_ssh(host_ip, CONTAINER_PORT, CONTAINER_USER, [
         ("SUPERVISOR", "supervisorctl status 2>&1"),
-        ("IMG_COUNT", f"ls /home/files/nfsroot/{today_str}/ 2>/dev/null | wc -l"),
+        ("IMG_COUNT", f"find /home/files/nfsroot/{today_str}/ -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) 2>/dev/null | wc -l"),
         ("IMG_INFO", f"ls -lt --time-style='+%Y-%m-%d %H:%M:%S' /home/files/nfsroot/{today_str}/ 2>/dev/null | head -2"),
         ("GREP_CONF", "grep -hE 'stdout_logfile=|stderr_logfile=' /etc/supervisor/conf.d/*.conf 2>/dev/null | sort -u"),
     ], exec_timeout=30)
