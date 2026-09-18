@@ -50,61 +50,78 @@ def _summarize_log_errors(log_errors: dict) -> str:
     return "; ".join(parts) if parts else ""
 
 
-def _build_diag_result(ip, dims, root=""):
-    import json
-    from datetime import datetime
+def _build_diag_result(ip, dims, root="", project="", access=None):
+    """Build the canonical device diagnosis result while preserving UI fields."""
+    from diagnose_mec.result_schema import build_domain_result, finalize_summary
 
-    has_e = any(d["status"] == "error" for d in dims)
-    has_w = any(d["status"] == "warning" for d in dims)
-    overall = "error" if has_e else ("warning" if has_w else "normal")
+    has_e = any(d.get("status") == "error" for d in dims)
+    has_w = any(d.get("status") == "warning" for d in dims)
 
-    diag_time = datetime.now().strftime("%Y-%m-%d %H:%M")
-
-    summary_parts = [f"设备 {ip} 诊断完毕（{'异常' if has_e else '需要关注' if has_w else '正常'}），{diag_time}"]
-    if root:
-        summary_parts.append(f"根因: {ROOT_CAUSE_CN.get(root, root)}")
-    else:
-        error_names = [d["name"] for d in dims if d["status"] == "error"]
-        warning_names = [d["name"] for d in dims if d["status"] == "warning"]
-        if error_names:
-            summary_parts.append(f"异常维度: {', '.join(error_names)}")
-        if warning_names:
-            summary_parts.append(f"需要关注的维度: {', '.join(warning_names)}")
-
-    ok_names = [d["name"] for d in dims if d["status"] == "ok"]
-    if ok_names:
-        summary_parts.append(f"正常维度: {', '.join(ok_names)}")
-
-    skip_names = [d["name"] for d in dims if d["status"] == "skip"]
-    if skip_names:
-        summary_parts.append(f"未检查维度: {', '.join(skip_names)}（因上游不可达）")
-
-    summary_for_llm = "\n".join(summary_parts)
+    # Prefer an explicitly supplied root cause; otherwise choose the first
+    # actionable dimension in a stable priority order.
+    priority = [
+        "ssh_unreachable", "physical_unreachable",
+        "docker_service_down", "dev_container_missing", "dev_container_stopped",
+        "container_ssh_down", "container_exec_failed",
+        "gpu_driver_error", "process_fatal", "supervisor_error",
+        "process_error", "roscore_down", "ros_master_error",
+        "topic_all_zero", "topic_partial_zero", "zero_images", "log_error_only",
+    ]
+    if not root:
+        problems = [d.get("problem") for d in dims if d.get("problem")]
+        root = next((p for p in priority if p in problems), problems[0] if problems else "")
 
     generic_root_causes = {
         "unknown", "process_error", "process_fatal", "supervisor_error",
         "roscore_down", "ros_master_error", "topic_all_zero",
         "topic_partial_zero", "log_error_only", "zero_images",
     }
-    deep_analysis_recommended = bool(
-        has_e and root in generic_root_causes
-    )
+    deep_analysis_recommended = bool(has_e and root in generic_root_causes)
 
-    result = {
-        "type": "diagnose_device_result",
-        "ip": ip,
-        "overall": overall,
-        "root_cause": root,
-        "deep_analysis_recommended": deep_analysis_recommended,
-        "diagnosis_time": diag_time,
-        "dimensions": [],
-        "summary_for_llm": summary_for_llm,
-    }
+    evidence = []
+    symptoms = []
+    recommendations = []
+    for d in dims:
+        if d.get("detail") and d.get("status") in {"error", "warning", "ok"}:
+            evidence.append({
+                "dimension": d.get("name", ""),
+                "status": d.get("status", ""),
+                "detail": str(d.get("detail", ""))[:500],
+            })
+        if d.get("status") in {"error", "warning"}:
+            if d.get("name"):
+                symptoms.append(d["name"])
+        detail = str(d.get("detail", ""))
+        if "建议" in detail or d.get("problem"):
+            if detail:
+                recommendations.append(detail[:300])
+
+    overall = "error" if has_e else ("warning" if has_w else "normal")
+    next_action = "deep_analysis" if deep_analysis_recommended else "report"
+    if root in {"ambiguous_device", "device_not_found"}:
+        next_action = "ask_user"
+    elif root in {"physical_unreachable", "ssh_unreachable"}:
+        next_action = "verify_access"
+
+    result = build_domain_result(
+        result_type="diagnose_device_result",
+        ip=ip,
+        project=project,
+        overall=overall,
+        root_cause=root,
+        dimensions=[],
+        evidence=evidence,
+        symptoms=symptoms,
+        recommendations=recommendations[:10],
+        deep_analysis_recommended=deep_analysis_recommended,
+        next_action=next_action,
+        extra={"access": access or {}},
+    )
 
     for d in dims:
         dim_entry = {
-            "name": d["name"],
-            "status": d["status"],
+            "name": d.get("name", ""),
+            "status": d.get("status", "warning"),
             "detail": d.get("detail", ""),
         }
         if d.get("problem"):
@@ -119,16 +136,16 @@ def _build_diag_result(ip, dims, root=""):
                 dim_entry["log_errors_detail"] = err_snippets[:5]
 
         if d.get("_topic_rates"):
-            topic_items = []
             zero_set = set(d.get("_zero_topics", []))
-            for t, r in d["_topic_rates"].items():
-                item = f"{t}: {r}"
-                topic_items.append({"topic": item, "is_zero": t in zero_set})
-            dim_entry["topic_rates"] = topic_items
-
+            dim_entry["topic_rates"] = [
+                {"topic": f"{t}: {r}", "is_zero": t in zero_set}
+                for t, r in d["_topic_rates"].items()
+            ]
         result["dimensions"].append(dim_entry)
 
-    return json.dumps(result, ensure_ascii=False)
+    return json.dumps(finalize_summary(result), ensure_ascii=False)
+
+
 
 
 ROOT_CAUSE_CN = {
