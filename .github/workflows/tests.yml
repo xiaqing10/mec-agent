@@ -23,7 +23,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pytest
-      - name: Compile Python
-        run: python -m compileall -q .
+      - name: Compile tracked Python
+        run: |
+          python - <<'PY'
+          import subprocess
+          import sys
+          files = subprocess.check_output(["git", "ls-files", "*.py"], text=True).splitlines()
+          if files:
+              subprocess.run([sys.executable, "-m", "py_compile", *files], check=True)
+          PY
       - name: Unit tests
         run: pytest -q
