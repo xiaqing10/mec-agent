@@ -861,7 +861,7 @@ def mec_llm_diagnose_device(ip: str, project: str = "") -> str:
             prompt,
             timeout=45,
             max_tokens=4096,
-            retry=1,
+            retry=0,
         )
         status = "normal" if content else "warning"
         result = {
