@@ -88,7 +88,6 @@ def ssh_exec(host_ip: str, port: int, user: str, command: str, exec_timeout: int
 
     cmd = [
         SSH_CMD,
-        "-i", SSH_KEY,
         "-o", "StrictHostKeyChecking=no",
         "-o", "BatchMode=yes",
         "-o", "PasswordAuthentication=no",
@@ -99,6 +98,9 @@ def ssh_exec(host_ip: str, port: int, user: str, command: str, exec_timeout: int
         f"{user}@{host_ip}",
         command
     ]
+
+    if SSH_KEY:
+        cmd[1:1] = ["-i", SSH_KEY]
 
     try:
         try:
