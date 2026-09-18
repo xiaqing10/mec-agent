@@ -188,16 +188,21 @@ def diagnose_device(device_info):
     result["project"] = result.get("project") or project
     result["entity"] = {"ip": result.get("ip") or ip, "project": result.get("project") or project}
 
-    return route_device_result(
+    routed = route_device_result(
         result,
         deep_analysis_invoke=lambda target_ip, target_project: mec_llm_diagnose_device.invoke({
             "ip": target_ip, "project": target_project
         }),
     )
+    routed["device_name"] = device_name
+    routed["project"] = routed.get("project") or project
+    routed["entity"] = {"ip": routed.get("ip") or ip, "project": routed.get("project") or project}
+    return routed
 def build_dingtalk_message(results, project_name):
     """Render canonical device diagnosis results for the project report."""
     message = f"## 设备诊断-项目: {project_name}\\n\\n"
-    message += f"**诊断时间**: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}\\n\\n"
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    message += f"**诊断时间**: {timestamp}\\n\\n"
     if not results:
         return message + "项目当前无异常设备，无需诊断。"
 
@@ -205,9 +210,11 @@ def build_dingtalk_message(results, project_name):
         ip = r.get("ip", r.get("entity", {}).get("ip", ""))
         name = r.get("device_name", "未知")
         message += f"### {name} ({ip})\\n"
-        message += f"- 状态: {r.get("status", r.get("overall", "warning"))}\\n"
+        status = r.get("status", r.get("overall", "warning"))
+        message += f"- 状态: {status}\\n"
         if r.get("root_cause"):
-            message += f"- 根因: {r["root_cause"]}\\n"
+            root_cause = r.get("root_cause", "")
+            message += f"- 根因: {root_cause}\\n"
         for item in (r.get("evidence") or [])[:5]:
             if isinstance(item, dict):
                 label = item.get("dimension", item.get("name", "证据"))
@@ -218,7 +225,8 @@ def build_dingtalk_message(results, project_name):
             analysis = str(deep["analysis"]).replace("\\n", " ").strip()
             message += f"- 深度分析: {analysis[:500]}\\n"
         if r.get("error"):
-            message += f"- 错误: {str(r["error"])[:300]}\\n"
+            error_text = str(r.get("error", ""))
+            message += f"- 错误: {error_text[:300]}\\n"
         message += "\\n"
     return message
 def diagnose_project(project_name):
