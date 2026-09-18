@@ -965,6 +965,9 @@ try {
         var status = data.status;
         if (status === 'stopped') {
           contentDiv.innerHTML = '✅ 已取消';
+        } else if (status === 'busy') {
+          contentDiv.innerHTML = '⏳ 当前会话已有请求正在处理，请稍候再发送。';
+          fullText = '';
         } else {
           contentDiv.innerHTML = renderMD(fullText);
           void contentDiv.offsetHeight;
