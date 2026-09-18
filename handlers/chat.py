@@ -144,7 +144,6 @@ async def handle_chat(request):
         agent = await get_agent()
         config = {"configurable": {"thread_id": session_id}, "recursion_limit": 50}
 
-        state = await agent.aget_state(config)
         from agent import extract_explicit_request_context
         req_project, req_ip = extract_explicit_request_context(user_message)
         final_state = await agent.ainvoke(
