@@ -80,8 +80,61 @@ def _get_llm():
     return get_chat_model(timeout=45, max_tokens=4096)
 
 
-def _get_llm_with_tools():
-    return get_chat_model(with_tools=True, tools=TOOLS, timeout=45, max_tokens=4096)
+def _select_agent_tools(route: str):
+    by_name = {getattr(t, "name", ""): t for t in TOOLS}
+    common = ["resolve_mec_device", "resolve_mec_project", "help_info", "memory"]
+    route_names = {
+        "device_diagnosis": common + [
+            "mec_diagnose_device", "mec_device_info",
+            "query_mec_device_from_db", "query_mec_abnormal",
+            "mec_ssh_exec",
+        ],
+        "device_info": common + [
+            "mec_device_info", "query_mec_device_from_db", "mec_ssh_exec",
+        ],
+        "project_diagnosis": common + [
+            "mec_diagnose_project", "query_mec_project_from_db",
+            "query_mec_abnormal", "feishu_analyze_logs",
+        ],
+        "mec_query": common + [
+            "query_mec_abnormal", "query_mec_device_from_db",
+            "query_mec_project_from_db", "query_mec_event_records",
+            "query_mec_event_image", "query_mec_project_event_stats",
+            "mec_device_info",
+        ],
+        "server_query": common + [
+            "query_server_traffic_flow", "query_server_events",
+            "query_server_event_stats", "query_server_device_metrics",
+            "query_server_traffic_pattern", "query_server_analysis_report",
+        ],
+        "repair": common + [
+            "mec_diagnose_device", "mec_device_info",
+            "query_mec_device_from_db", "mec_repair_device",
+        ],
+        "report": common + [
+            "feishu_analyze_logs", "feishu_fetch_report",
+        ],
+        "general": common + [
+            "query_mec_abnormal", "query_mec_device_from_db",
+            "query_mec_project_from_db", "mec_diagnose_device",
+            "mec_device_info", "feishu_analyze_logs",
+            "feishu_fetch_report", "mec_diagnose_project",
+            "query_mec_event_records", "query_mec_project_event_stats",
+            "query_server_traffic_flow", "query_server_events",
+            "query_server_event_stats", "query_server_device_metrics",
+            "query_server_traffic_pattern", "query_server_analysis_report",
+            "mec_repair_device", "push_to_dingtalk", "mec_ssh_exec",
+            "generate_improvement_report",
+        ],
+    }
+    names = route_names.get(route, route_names["general"])
+    return [by_name[n] for n in dict.fromkeys(names) if n in by_name and n != "mec_llm_diagnose_device"]
+
+
+def _get_llm_with_tools(selected_tools):
+    return get_chat_model(
+        with_tools=True, tools=selected_tools, timeout=45, max_tokens=4096
+    )
 
 
 # ──────────────────────────────────────────────
@@ -243,7 +296,9 @@ def post_tool_router_node(state: AgentState) -> dict:
 def agent_node(state: AgentState) -> dict:
     """Call LLM with conversation history and bound tools."""
     messages = state["messages"]
-    llm_with_tools = _get_llm_with_tools()
+    route_hint = state.get("route_hint", "general")
+    selected_tools = _select_agent_tools(route_hint)
+    llm_with_tools = _get_llm_with_tools(selected_tools)
 
     # Keep the system prompt compact. Tool schemas are the source of truth.
     system_prompt = """你是智慧交通/MEC运维智能体。首要原则：**先用工具获得事实，再回答；不要凭空猜设备、项目、状态或根因。**
@@ -309,7 +364,6 @@ def agent_node(state: AgentState) -> dict:
             ctx_parts.append(f"最近操作项目: {ctx_project}")
         system_prompt += f"\n\n当前对话上下文：{'，'.join(ctx_parts)}"
 
-    route_hint = state.get("route_hint", "")
     if route_hint:
         system_prompt += f"\n\n本轮确定性路由提示：{route_hint}。请优先选择与该路由一致的工具；若当前用户请求与提示不一致，以当前请求的明确内容为准。"
 
@@ -354,7 +408,7 @@ def agent_node(state: AgentState) -> dict:
         response = invoke_messages(
             all_messages,
             with_tools=True,
-            tools=TOOLS,
+            tools=selected_tools,
             timeout=45,
             max_tokens=4096,
             retry=1,
