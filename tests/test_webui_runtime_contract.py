@@ -75,5 +75,7 @@ def test_webui_repairs_escaped_flattened_tables():
     assert "Some model responses escape table pipes" in source
     assert "tableLike" in source
     assert "Flattened tables commonly collapse row boundaries" in source
+    assert "Split common section labels" in source
+    assert "heading followed by '-' is commonly a flattened bullet list" in source
     assert "String.fromCharCode(96)" in source
     assert "__MD_FENCE_" in source
