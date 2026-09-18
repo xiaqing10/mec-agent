@@ -79,6 +79,8 @@ def test_webui_repairs_escaped_flattened_tables():
     assert "heading followed by '-' is commonly a flattened bullet list" in source
     assert "String.fromCharCode(96)" in source
     assert "__MD_FENCE_" in source
+    assert "Normalize separator rows that use typographic dashes" in source
+    assert "row.replace(/[-—–－]+/g, '---')" in source
 
 def test_webui_markdown_repair_declares_fence_regex():
     source = _read_webui()
