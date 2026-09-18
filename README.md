@@ -45,7 +45,10 @@ Web UI (webui.py) / API Client
 | 文件 | 说明 |
 |------|------|
 | `server.py` | aiohttp Web 服务入口，含认证中间件，注册所有 API 路由 |
-| `agent.py` | LangGraph Agent 定义：AgentState、StateGraph（agent/tools/update_context/feedback 节点）、system prompt（工具优先策略）、AsyncSqliteSaver 持久化会话状态 |
+| `agent.py` | LangGraph Agent 定义：AgentState、StateGraph、LLM调用与最终响应兜底；基础 Prompt 外置到 `prompts/agent_system_prompt.md` |
+| `prompts/agent_system_prompt.md` | Agent System Prompt 配置文件，可独立调整工具路由、诊断与安全规则 |
+| `prompt_config.py` | Prompt 配置加载器，支持 `AGENT_SYSTEM_PROMPT_FILE` 覆盖默认路径 |
+| `response_fallback.py` | 非空响应硬兜底：不调用模型，按本轮工具名/关键错误生成固定模板 |
 | `config.py` | 全局配置：LLM API（火山引擎 deepseek-v4-flash）、MySQL 连接、SSH 密钥路径、用户列表、飞书/钉钉 API 密钥、ContextVar 当前用户 ID |
 | `tools.py` | 兼容性包装，重新导出 `tools/` 包的 `TOOLS` 列表 |
 
@@ -135,15 +138,16 @@ Web UI (webui.py) / API Client
 
 | 节点 | 功能 |
 |------|------|
-| `agent` | LLM 决策节点：注入 system prompt（工具优先策略）+ 用户记忆 + 对话上下文，决定调用工具或直接回复 |
-| `tools` | ToolNode：执行 agent 选中的工具（15个），返回结果 |
+| `agent` | LLM 决策节点：加载外部 system prompt + 用户记忆 + 对话上下文，决定调用工具或直接回复 |
+| `tools` | ToolNode：执行 agent 选中的工具，返回结果 |
+| `finalize_response` | 最终响应守门：AI `content` 为空/全空白时直接生成确定性兜底，不进行第二次 LLM 调用 |
 | `update_context` | 从工具结果中提取 `last_ip` / `last_project`，更新对话状态 |
 | `feedback` | 提取对话意图，LLM 自评正确性分数（0-10），标记是否需要用户反馈 |
 
 ### 数据流
 
 ```
-agent ──(有工具调用)──▶ tools ──▶ agent ──▶ ... ──▶ (无工具调用) ──▶ update_context ──▶ feedback ──▶ END
+agent ──(有工具调用)──▶ tools ──▶ agent ──▶ ... ──▶ (无工具调用) ──▶ update_context ──▶ finalize_response ──▶ feedback ──▶ END
 ```
 
 ### 模型配置
