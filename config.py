@@ -109,15 +109,15 @@ MONGO_DB = os.getenv("MONGO_DB", "radarData")
 EVENT_IMAGE_BASE_URL = os.getenv("EVENT_IMAGE_BASE_URL", "http://172.172.5.6:7080")
 
 # SSH 密钥路径
-#SSH_KEY_PATH = os.getenv("SSH_KEY_PATH", str(SELF_AGENT_DIR / "id_ed25519"))
-SSH_KEY_PATH = os.getenv("SSH_KEY_PATH", str(SELF_AGENT_DIR / "id_ed25519"))
+# Private SSH keys must be injected at runtime; never fall back to a repository-local key.
+SSH_KEY_PATH = os.getenv("SSH_KEY_PATH", "")
 
 # SSH 客户端路径 — Windows 用原生 ssh.exe，Linux 用系统 ssh
 #SSH_CMD_PATH = os.getenv("SSH_CMD", "/mnt/c/Windows/System32/OpenSSH/ssh.exe")
 SSH_CMD_PATH = os.getenv("SSH_CMD", "ssh")
 
 # 需要 sudo 提权的用户列表
-SSH_SUDO_USERS = os.getenv("SSH_SUDO_USERS", "lcfc,nvidia").split(",")
+SSH_SUDO_USERS = [u.strip() for u in os.getenv("SSH_SUDO_USERS", "lcfc,nvidia").split(",") if u.strip()]
 
 # ROS 环境初始化命令（三段 fallback）
 SSH_ROS_ENV_CMD = os.getenv(
