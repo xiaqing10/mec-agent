@@ -17,7 +17,7 @@ Web UI (webui.py) / API Client
    节点: agent → tools → update_context → feedback → END
    持久化: AsyncSqliteSaver → checkpoints.db
         ↓                    ↓
-  tools/ 包 (23个 Tool)    diagnose_mec/ 包 (SSH诊断引擎)
+  tools/ 包 (26个 Tool)    diagnose_mec/ 包 (SSH诊断引擎)
    ├── tool_device          ├── diagnostics.py
    ├── tool_project         ├── parsers.py
    ├── tool_db (MySQL)      └── ssh.py
@@ -45,7 +45,7 @@ Web UI (webui.py) / API Client
 | 文件 | 说明 |
 |------|------|
 | `server.py` | aiohttp Web 服务入口，含认证中间件，注册所有 API 路由 |
-| `agent.py` | LangGraph Agent 定义：AgentState、StateGraph（agent/tools/update_context/feedback 节点）、system prompt（32条规则）、AsyncSqliteSaver 持久化 |
+| `agent.py` | LangGraph Agent 定义：AgentState、StateGraph（agent/tools/update_context/feedback 节点）、system prompt（工具优先策略）、MemorySaver 进程内会话状态（生产环境持久化计划后续切换） |
 | `config.py` | 全局配置：LLM API（火山引擎 deepseek-v4-flash）、MySQL 连接、SSH 密钥路径、用户列表、飞书/钉钉 API 密钥、ContextVar 当前用户 ID |
 | `tools.py` | 兼容性包装，重新导出 `tools/` 包的 `TOOLS` 列表 |
 
@@ -59,11 +59,12 @@ Web UI (webui.py) / API Client
 | `memory.py` | 用户记忆 API：列表、摘要（含容量）、创建、更新、删除 |
 | `repair.py` | 修复执行：接收前端确认的修复操作，调用 `execute_repair()` |
 
-### tools/ 包 — LangChain Tool 定义（23个）
+### tools/ 包 — LangChain Tool 定义（26个）
 
 | 文件 | 工具 | 说明 |
 |------|------|------|
 | `tool_device.py` | `diagnose_device` | 单设备 6 维度 SSH 诊断（物理机/容器/进程/ROS/数据源/传感器） |
+| `tool_context.py` | `resolve_mec_device` / `resolve_mec_project` | 确定性解析设备和项目，避免LLM猜测实体 |
 | | `device_info` | 设备详细指标查询（硬盘/内存/CPU/网络/运行时间/历史数据） |
 | | `llm_diagnose_device` | SSH 采集全部原始数据 + LLM 深度根因分析 |
 | `tool_project.py` | `diagnose_project` | 批量诊断项目下所有异常设备（优先从数据库获取，回退飞书报告） |
@@ -134,7 +135,7 @@ Web UI (webui.py) / API Client
 
 | 节点 | 功能 |
 |------|------|
-| `agent` | LLM 决策节点：注入 system prompt（32条规则）+ 用户记忆 + 对话上下文，决定调用工具或直接回复 |
+| `agent` | LLM 决策节点：注入 system prompt（工具优先策略）+ 用户记忆 + 对话上下文，决定调用工具或直接回复 |
 | `tools` | ToolNode：执行 agent 选中的工具（15个），返回结果 |
 | `update_context` | 从工具结果中提取 `last_ip` / `last_project`，更新对话状态 |
 | `feedback` | 提取对话意图，LLM 自评正确性分数（0-10），标记是否需要用户反馈 |
