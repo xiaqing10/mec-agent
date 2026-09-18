@@ -680,7 +680,7 @@ def mec_device_info(ip: str, info_type: str = "disk") -> str:
                 today_str = datetime.date.today().strftime("%Y-%m-%d")
                 counts = []
                 for d in dirs[:30]:
-                    count_cmd = f"find /home/files/nfsroot/{d} -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) 2>/dev/null | wc -l"
+                    count_cmd = f"find /home/files/nfsroot/{d} -maxdepth 1 -type f \\( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \\) 2>/dev/null | wc -l"
                     cnt_out, _, _ = primary(count_cmd)
                     cnt = cnt_out.strip() or "0"
                     suffix = " (今天)" if d == today_str else ""
