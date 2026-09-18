@@ -151,6 +151,7 @@ class AgentState(TypedDict):
     auto_correctness: Optional[int]
     request_project: str
     request_ip: str
+    request_model: str
     route_hint: Optional[str]
     deep_analysis_done: bool
 
