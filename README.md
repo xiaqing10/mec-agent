@@ -344,4 +344,5 @@ LangGraph 当前使用 `AsyncSqliteSaver` 持久化会话状态；SQLite checkpo
 
 
 补充：诊断结果的共享序列化函数 `_build_diag_result()` 同样显式依赖标准库 `json`；已增加导入与回归测试，避免运行到设备诊断结果收尾阶段才出现 `NameError: name `json` is not defined`。
-`mec_diagnose_device` 与 `query_mec_device_from_db` 显式导入标准库 `json`，并通过源码回归测试同时约束 `@tool` 函数的 docstring 必须紧跟函数定义，避免因导入/注释插入 docstring 之前导致 LangChain 在启动阶段报 `Function must have a docstring`。部署代码变更后需要完整重启 Agent 进程，确保运行中的 Python 模块与当前分支代码一致。
+
+另外，回归测试现在会遍历项目内 Python 源码并用 AST 检查 `json.dumps/loads/dump/load` 等标准 JSON API：凡使用 `json` 模块却没有显式导入的文件都会直接失败，避免再次出现“某个遗漏模块运行到特定分支才触发 NameError”。`mec_diagnose_device` 与 `query_mec_device_from_db` 显式导入标准库 `json`，并通过源码回归测试同时约束 `@tool` 函数的 docstring 必须紧跟函数定义，避免因导入/注释插入 docstring 之前导致 LangChain 在启动阶段报 `Function must have a docstring`。部署代码变更后需要完整重启 Agent 进程，确保运行中的 Python 模块与当前分支代码一致。
