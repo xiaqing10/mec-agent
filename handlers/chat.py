@@ -101,8 +101,11 @@ def _normalize_table(rows):
 def _extract_agent_reply(state: dict) -> str:
     messages = state.get("messages", [])
     for msg in reversed(messages):
-        if hasattr(msg, 'content') and msg.content and getattr(msg, 'type', '') == 'ai':
-            return msg.content
+        if getattr(msg, 'type', '') != 'ai':
+            continue
+        content = getattr(msg, 'content', '')
+        if isinstance(content, str) and content.strip():
+            return content
     return ""
 
 
@@ -183,7 +186,9 @@ async def handle_chat(request):
              "last_ip": req_ip},
             config
         )
-        reply = _fix_table_alignment(_extract_agent_reply(final_state) or "处理完成，但未生成回复。")
+        from response_fallback import build_deterministic_fallback
+        reply = _fix_table_alignment(_extract_agent_reply(final_state) or build_deterministic_fallback(
+            final_state.get("messages", [])))
 
         username = _get_username(request) or session_id
         intent = final_state.get("conversation_intent", "")
@@ -207,7 +212,20 @@ async def handle_chat(request):
         })
     except Exception as e:
         logger.error("❌ LangGraph执行失败: %s | 类型=%s", str(e), type(e).__name__, exc_info=True)
-        return web.json_response({"success": False, "error": f"处理失败: {str(e)}"}, status=500)
+        from response_fallback import build_deterministic_fallback
+        fallback = build_deterministic_fallback(
+            final_state.get("messages", []) if "final_state" in locals() else [],
+            errors=[f"{type(e).__name__}: {str(e)}"],
+        )
+        # Keep the transport successful so the UI always has a user-visible reply.
+        return web.json_response({
+            "success": True,
+            "action": "chat",
+            "data": {"reply": fallback, "degraded": True},
+            "session_id": session_id,
+            "pending_feedback": False,
+            "error": f"处理失败: {str(e)}",
+        }, status=200)
     finally:
         if acquired:
             lock.release()
@@ -310,6 +328,7 @@ async def handle_chat_stream(request):
         tool_output_lines = []
         tool_called = False
         tool_actions = []
+        stream_tool_names = []
         last_user_msg = user_message
         last_ai_msg = ""
         drain_task = None
@@ -380,6 +399,8 @@ async def handle_chat_stream(request):
 
             elif kind == "on_tool_start":
                 current_tool = name
+                if name and name not in stream_tool_names:
+                    stream_tool_names.append(name)
                 tool_input = data.get("input", {})
                 await _send("tool_start", {"name": name, "input": tool_input})
                 if name == "mec_diagnose_device":
@@ -440,11 +461,20 @@ async def handle_chat_stream(request):
         _stream_t1 = time.time()
         logger.info("[TIMING] SSE 流结束 | 总耗时=%.1fs", time.time() - _stream_t0)
 
-        if not last_ai_msg:
-            err_msg = "模型响应超时或异常，未能生成回复，请重试。若持续失败请联系管理员检查 API 状态。"
-            logger.warning("astream_events 未产出任何 AI 消息，补发错误提示")
-            await _send("token", {"content": err_msg})
-            last_ai_msg = err_msg
+        if not last_ai_msg.strip():
+            # The finalizer node persists a deterministic AIMessage when model content is empty.
+            # Read it back so the SSE client receives the exact same fallback as non-stream mode.
+            final_state = await agent.aget_state(config)
+            last_ai_msg = _extract_agent_reply(final_state)
+            if not last_ai_msg.strip():
+                from response_fallback import build_deterministic_fallback
+                last_ai_msg = build_deterministic_fallback(
+                    final_state.get("messages", []),
+                    tool_names=stream_tool_names,
+                    errors=["模型未返回非空 content"],
+                )
+            logger.warning("astream_events 未产出可显示 AI 内容，补发确定性兜底回复")
+            await _send("token", {"content": last_ai_msg})
 
         await _send("done", {"status": "complete"})
 
@@ -472,13 +502,13 @@ async def handle_chat_stream(request):
 
     except Exception as e:
         logger.error("❌ SSE流失败: %s | 类型=%s", str(e), type(e).__name__, exc_info=True)
-        err_msg = str(e)
-        if "timed out" in err_msg.lower() or "timeout" in err_msg.lower():
-            err_msg = "模型响应超时，请稍后重试。若持续失败请联系管理员检查 API 状态。"
-        elif "quota" in err_msg.lower() or "429" in err_msg or "AccountQuotaExceeded" in err_msg:
-            err_msg = "LLM API 配额超限，请稍后再试（每日 00:48 重置）。已执行的工具结果见上方。"
-        elif "ExpatError" in err_msg or "xml" in err_msg.lower():
-            err_msg = "模型返回异常（XML解析错误），请重试。"
+        from response_fallback import build_deterministic_fallback
+        err_msg = build_deterministic_fallback(
+            [],
+            tool_names=stream_tool_names if "stream_tool_names" in locals() else [],
+            errors=[f"{type(e).__name__}: {str(e)}"],
+        )
+        # Keep this path deterministic: no second LLM call and no generic overwrite of tool context.
         try:
             await _send("token", {"content": f"\n\n[错误] {err_msg}"})
         except Exception:
