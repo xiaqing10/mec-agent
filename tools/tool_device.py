@@ -42,7 +42,7 @@ def mec_diagnose_device(ip: str, project: str = "") -> str:
     dimensions = []
     fallback_img = None
 
-    cont = diagnose_container_offline(ip, progress_cb=get_diag_progress_callback())
+    cont = diagnose_container_offline(ip, progress_cb=get_diag_progress_callback(), project=effective_project)
     cd = cont.get("diagnosis", {})
 
     ce = cd.get("error", "")
@@ -52,7 +52,7 @@ def mec_diagnose_device(ip: str, project: str = "") -> str:
         # device unreachable, try the MEC container SSH endpoint directly.
         _notify_progress("物理机", "warning", "物理机SSH未登录成功，尝试容器10022端口直连...")
         fallback_img = diagnose_zero_images(
-            ip, container_ssh_info=None, progress_cb=get_diag_progress_callback()
+            ip, container_ssh_info=None, progress_cb=get_diag_progress_callback(), project=effective_project
         )
         fallback_diag = fallback_img.get("diagnosis", {})
         container_access = fallback_diag.get("container_access", "unavailable")
@@ -237,7 +237,8 @@ def mec_diagnose_device(ip: str, project: str = "") -> str:
     container_ssh_info = cd.get("_container_ssh_info") if cd else None
     img = fallback_img or diagnose_zero_images(
         ip, container_ssh_info=container_ssh_info,
-        progress_cb=get_diag_progress_callback()
+        progress_cb=get_diag_progress_callback(),
+        project=effective_project
     )
     iz = img.get("diagnosis", {})
     ic = iz.get("today_image_count", -1)
