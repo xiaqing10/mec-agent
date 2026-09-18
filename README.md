@@ -342,4 +342,4 @@ LangGraph 当前使用 `AsyncSqliteSaver` 持久化会话状态；SQLite checkpo
 
 ### 设备工具 JSON 运行时保护
 
-`mec_diagnose_device` 与 `query_mec_device_from_db` 在工具函数内部使用局部 `json` 模块别名进行结果序列化，并配套源码回归测试，避免热重载/模块复用场景下出现 `NameError: name 'json' is not defined` 导致工具结果无法正常返回。部署代码变更后需要完整重启 Agent 进程，确保运行中的 Python 模块与当前分支代码一致。
+`mec_diagnose_device` 与 `query_mec_device_from_db` 显式导入标准库 `json` 并配套源码回归测试，避免出现 `NameError: name 'json' is not defined` 导致工具结果无法正常返回。部署代码变更后需要完整重启 Agent 进程，确保运行中的 Python 模块与当前分支代码一致。
