@@ -13,9 +13,14 @@ Web UI (webui.py) / API Client
         ↓
   handlers/ (auth/chat/feedback/memory/repair)
         ↓
+  Request Context / Session Isolation
+   session_id 必填 · 每会话短超时 try-acquire · request_* 当前轮优先
+        ↓
   agent.py (LangGraph StateGraph)
-   节点: agent → tools → update_context → finalize_response → feedback → END
+   节点: route_request → agent → tools → post_tool_router → update_context
+         → finalize_response → feedback → END
    持久化: AsyncSqliteSaver → checkpoints.db
+   recursion_limit: 顶层 invocation 配置
         ↓                    ↓
   tools/ 包 (26个 Tool)    diagnose_mec/ 包 (SSH诊断引擎)
    ├── tool_device          ├── diagnostics.py
@@ -45,11 +50,11 @@ Web UI (webui.py) / API Client
 | 文件 | 说明 |
 |------|------|
 | `server.py` | aiohttp Web 服务入口，含认证中间件，注册所有 API 路由 |
-| `agent.py` | LangGraph Agent 定义：AgentState、StateGraph、LLM调用与最终响应兜底；基础 Prompt 外置到 `prompts/agent_system_prompt.md` |
+| `agent.py` | LangGraph Agent 定义：AgentState、StateGraph、LLM调用、确定性路由与最终响应兜底；基础 Prompt 外置到 `prompts/agent_system_prompt.md`；上下文裁剪只影响本轮模型输入 |
 | `prompts/agent_system_prompt.md` | Agent System Prompt 配置文件，可独立调整工具路由、诊断与安全规则 |
 | `prompt_config.py` | Prompt 配置加载器，支持 `AGENT_SYSTEM_PROMPT_FILE` 覆盖默认路径 |
 | `response_fallback.py` | 非空响应硬兜底：不调用模型，按本轮工具名/关键错误生成固定模板 |
-| `config.py` | 全局配置：LLM API（火山引擎 deepseek-v4-flash）、MySQL 连接、SSH 密钥路径、用户列表、飞书/钉钉 API 密钥、ContextVar 当前用户 ID |
+| `config.py` | 全局配置：LLM API、MySQL/MongoDB、运行时 SSH 密钥路径、用户列表、飞书/钉钉配置、ContextVar 当前用户 ID；禁止仓库内默认私钥 |
 | `tools.py` | 兼容性包装，重新导出 `tools/` 包的 `TOOLS` 列表 |
 
 ### handlers/ 包 — API 请求处理
@@ -212,7 +217,7 @@ python3 server.py
 - `LLM_MODEL` / `LLM_BASE_URL` / `LLM_API_KEY` — LLM API
 - `MYSQL_*` — MySQL 数据库连接
 - `MONGO_*` — MongoDB 数据库连接（雷达交通数据）
-- `SSH_KEY_PATH` — SSH 密钥路径
+- ``SSH_KEY_PATH` — SSH 私钥路径，**必须指向部署环境注入的密钥，不再默认为仓库内 `id_ed25519`**
 - `USERS` — 用户账号列表
 - `FEISHU_*` — 飞书 API
 - `DINGTALK_*` — 钉钉 Webhook
@@ -277,10 +282,13 @@ export VOLCENGINE_API_KEY="..."
 export BAIDU_API_KEY="..."
 export SELF_AGENT_API_KEY="..."
 export AGENT_SYSTEM_PROMPT_FILE="/path/to/agent_system_prompt.md"   # 可选；默认使用项目内 prompts/agent_system_prompt.md
+export SSH_KEY_PATH="/run/secrets/mec_agent_ed25519"                  # 生产环境注入的新 SSH 私钥
 export FEISHU_APP_SECRET="..."
 export MYSQL_PASS="..."
 export CHECKPOINT_DB_PATH="/path/to/checkpoints.db"
 export REPAIR_SIGNING_KEY="..."
+export SSH_KEY_PATH="/run/secrets/mec_agent_ed25519"
+# 可选：export AGENT_SYSTEM_PROMPT_FILE="/path/to/agent_system_prompt.md"
 ```
 
 LangGraph 当前使用 `AsyncSqliteSaver` 持久化会话状态；SQLite checkpoint 需要 `aiosqlite`，项目依赖已包含。当前主 Agent 只把深度诊断工具留给确定性结果 Router，不让普通 LLM 回合自行调用深度分析。
@@ -292,3 +300,25 @@ LangGraph 当前使用 `AsyncSqliteSaver` 持久化会话状态；SQLite checkpo
 `候选设备发现 → mec_diagnose_device → Structured Result → diagnosis_router → 可选 mec_llm_diagnose_device → LLM总结`
 
 项目级诊断仅负责从数据库/飞书报告发现候选设备并去重，不再针对“物理离线 / 容器离线 / 图片为0”维护独立的诊断规则或独立的 LLM 判定规则。
+
+
+## 安全与凭据轮换
+
+仓库历史中曾存在 `id_ed25519` 私钥。该密钥应视为**已经泄露并永久失效**，仅从当前分支删除文件并不足以完成安全处置。部署前必须在实际 MEC 设备上撤销旧公钥，并生成/安装新的 Ed25519 密钥；Agent 运行环境通过 `SSH_KEY_PATH` 注入新私钥。新私钥不得提交 Git、写入诊断结果、checkpoint、缓存、LLM Prompt 或日志。
+
+建议轮换步骤：
+
+1. 在可信运维环境生成新的 Ed25519 密钥对。
+2. 将新公钥安装到实际 MEC 设备允许登录的账号 `authorized_keys`。
+3. 从目标设备撤销旧 `id_ed25519` 对应公钥。
+4. 将新私钥通过 Secret/volume 注入 Agent，设置 `SSH_KEY_PATH`。
+5. 验证诊断链路后，再回收旧密钥及其备份。
+6. 如该旧私钥曾用于多个环境，应按环境分别检查并轮换，不能只处理当前测试机。
+
+## 可靠性与防空回复
+
+最终响应由代码层 `finalize_response` 守门：最终 AI `content` 必须为非空文本；否则系统直接生成确定性固定模板，包含本轮工具名和关键错误，不进行模型二次生成。因此“工具执行成功但模型没返回正文”“模型返回空字符串”“LLM 调用异常”都不会产生空回复。
+
+## Memory 工具边界
+
+`memory` 已作为 LangGraph Tool 注册，但仍遵循用户级隔离。记忆用于长期偏好/事实/习惯，不用于覆盖当前请求的 project/IP；当前请求上下文始终优先于 memory。一次性诊断查询不会自动写入长期偏好。
