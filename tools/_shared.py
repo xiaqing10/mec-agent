@@ -81,11 +81,21 @@ def _build_diag_result(ip, dims, root=""):
 
     summary_for_llm = "\n".join(summary_parts)
 
+    generic_root_causes = {
+        "unknown", "process_error", "process_fatal", "supervisor_error",
+        "roscore_down", "ros_master_error", "topic_all_zero",
+        "topic_partial_zero", "log_error_only", "zero_images",
+    }
+    deep_analysis_recommended = bool(
+        has_e and root in generic_root_causes
+    )
+
     result = {
         "type": "diagnose_device_result",
         "ip": ip,
         "overall": overall,
         "root_cause": root,
+        "deep_analysis_recommended": deep_analysis_recommended,
         "diagnosis_time": diag_time,
         "dimensions": [],
         "summary_for_llm": summary_for_llm,
