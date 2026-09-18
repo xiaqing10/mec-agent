@@ -68,3 +68,12 @@ def test_all_python_json_attribute_uses_have_a_json_import():
             failures.append(str(path.relative_to(root)))
 
     assert not failures, "json API used without an explicit json import: " + ", ".join(failures)
+
+
+def test_webui_repairs_escaped_flattened_tables():
+    source = WEBUI.read_text(encoding="utf-8")
+    assert "Some model responses escape table pipes" in source
+    assert "s = s.replace(/\\\\\\|/g, '|');" in source
+    assert "s = s.replace(/\\|\\|/g, '|\\n|');" in source
+    assert "String.fromCharCode(96)" in source
+    assert "__MD_FENCE_" in source
