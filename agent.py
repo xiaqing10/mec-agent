@@ -36,7 +36,7 @@ from tools import TOOLS, mec_llm_diagnose_device
 from llm_gateway import get_chat_model, invoke_messages, switch_model as gateway_switch_model
 from request_router import route_request
 from prompt_config import load_agent_system_prompt
-from response_fallback import build_deterministic_fallback
+from response_fallback import build_deterministic_fallback, ensure_non_empty_response
 
 
 # ──────────────────────────────────────────────
@@ -401,14 +401,10 @@ def update_context_node(state: AgentState) -> dict:
 def finalize_response_node(state: AgentState) -> dict:
     """Guarantee a non-empty final AI response using only current-turn facts."""
     messages = state.get("messages", [])
-    for msg in reversed(messages):
-        if getattr(msg, "type", "") != "ai":
-            continue
-        content = getattr(msg, "content", "")
-        if isinstance(content, str) and content.strip():
-            return {}
-        break
-    return {"messages": [AIMessage(content=build_deterministic_fallback(messages))]}
+    fallback = ensure_non_empty_response(messages)
+    if fallback is None:
+        return {}
+    return {"messages": [AIMessage(content=fallback)]}
 
 
 # ──────────────────────────────────────────────
