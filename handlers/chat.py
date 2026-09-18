@@ -120,8 +120,6 @@ async def handle_chat(request):
         return web.json_response({"success": False, "error": "message字段不能为空"}, status=400)
     if not session_id:
         return web.json_response({"success": False, "error": "session_id不能为空，禁止使用公共default会话"}, status=400)
-    if not session_id:
-        return web.json_response({"success": False, "error": "session_id不能为空，禁止使用公共default会话"}, status=400)
 
     model_id = body.get("model", "")
     if model_id:
@@ -329,15 +327,6 @@ async def handle_chat_stream(request):
                 pass
 
         _stream_t0 = time.time()
-
-        state = await agent.aget_state(config)
-        history = (state.values.get("messages", []) if state and state.values else [])
-        if _count_msg_chars(history) > _MAX_MSG_CHARS:
-            trimmed = _trim_messages_for_llm(history)
-            logger.info("⏳ 截断上下文: %d 条(%d 字符) → %d 条(%d 字符)",
-                        len(history), _count_msg_chars(history),
-                        len(trimmed), _count_msg_chars(trimmed))
-            agent.update_state(config, {"messages": trimmed})
 
         from agent import extract_explicit_request_context
         req_project, req_ip = extract_explicit_request_context(user_message)
