@@ -28,14 +28,14 @@ def mec_diagnose_device(ip: str, project: str = "") -> str:
     from query_sensor_status import get_sensor_status, get_device_db_info, format_device_db_info
 
     if not ip:
-        return _json.dumps({"error": "未指定设备IP或设备名"}, ensure_ascii=False)
+        return json.dumps({"error": "未指定设备IP或设备名"}, ensure_ascii=False)
 
     dev_info = None
     if not re.match(r'^\d+\.\d+\.\d+\.\d+$', ip):
         resolved_ip, dev_info = _resolve_device(ip, project=project or None)
         if dev_info and dev_info.get("_ambiguous"):
             projects = "、".join(dev_info.get("projects") or []) or "多个项目"
-            return _json.dumps({
+            return json.dumps({
                 "type": "diagnose_device_result",
                 "ip": ip,
                 "overall": "warning",
@@ -58,7 +58,7 @@ def mec_diagnose_device(ip: str, project: str = "") -> str:
         if project:
             msg += f"（项目：{project}）"
         msg += "，请检查设备名是否正确，或直接使用IP地址"
-        return _json.dumps({"error": msg}, ensure_ascii=False)
+        return json.dumps({"error": msg}, ensure_ascii=False)
 
     dimensions = []
     fallback_img = None
