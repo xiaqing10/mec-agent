@@ -67,7 +67,7 @@ Web UI (webui.py) / API Client
 | `memory.py` | 用户记忆 API：列表、摘要（含容量）、创建、更新、删除 |
 | `repair.py` | 修复执行：接收前端确认的修复操作，调用 `execute_repair()` |
 
-### tools/ 包 — LangChain Tool 定义（26个）
+### tools/ 包 — LangChain Tool 定义（27个）
 
 | 文件 | 工具 | 说明 |
 |------|------|------|
@@ -287,8 +287,8 @@ export FEISHU_APP_SECRET="..."
 export MYSQL_PASS="..."
 export CHECKPOINT_DB_PATH="/path/to/checkpoints.db"
 export REPAIR_SIGNING_KEY="..."
+# SSH_KEY_PATH 必须指向部署环境注入的新私钥
 export SSH_KEY_PATH="/run/secrets/mec_agent_ed25519"
-# 可选：export AGENT_SYSTEM_PROMPT_FILE="/path/to/agent_system_prompt.md"
 ```
 
 LangGraph 当前使用 `AsyncSqliteSaver` 持久化会话状态；SQLite checkpoint 需要 `aiosqlite`，项目依赖已包含。当前主 Agent 只把深度诊断工具留给确定性结果 Router，不让普通 LLM 回合自行调用深度分析。
