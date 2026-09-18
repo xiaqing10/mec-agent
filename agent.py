@@ -250,6 +250,11 @@ async def post_tool_router_node(state: AgentState) -> dict:
     if result.get("type") != "diagnose_device_result":
         return {}
 
+    model_id = state.get("request_model") or ""
+    if model_id:
+        from llm_gateway import switch_model
+        switch_model(model_id)
+
     routed = route_device_result(
         result,
         deep_analysis_invoke=lambda ip, project: mec_llm_diagnose_device.invoke({
