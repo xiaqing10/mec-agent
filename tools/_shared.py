@@ -1,17 +1,36 @@
-"""Shared state and helpers for tool modules."""
+"""Shared state and helpers for tool modules.
 
-_diag_progress_callback = None
+Per-request diagnostic progress is stored in a ContextVar so concurrent
+sessions cannot overwrite each other's callback.
+"""
+
+from contextvars import ContextVar
+
+_diag_progress_callback = ContextVar("diag_progress_callback", default=None)
 
 
 def set_diag_progress_callback(cb):
-    global _diag_progress_callback
-    _diag_progress_callback = cb
+    """Set the callback for the current async/task context and return a token."""
+    return _diag_progress_callback.set(cb)
+
+
+def reset_diag_progress_callback(token):
+    """Restore the previous callback for the current async/task context."""
+    _diag_progress_callback.reset(token)
+
+
+def get_diag_progress_callback():
+    return _diag_progress_callback.get()
 
 
 def _notify_progress(name, status, detail):
-    cb = _diag_progress_callback
+    cb = _diag_progress_callback.get()
     if cb:
-        cb(name, status, detail)
+        try:
+            cb(name, status, detail)
+        except Exception:
+            # Progress reporting must never break the actual diagnosis.
+            pass
 
 
 def _summarize_log_errors(log_errors: dict) -> str:
