@@ -347,6 +347,7 @@ async def handle_chat_stream(request):
             {"messages": [HumanMessage(content=user_message)],
              "request_project": req_project,
              "request_ip": req_ip,
+             "request_model": model_id,
              "last_project": req_project,
              "last_ip": req_ip},
             config,
