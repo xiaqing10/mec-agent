@@ -30,7 +30,9 @@ from langchain_core.messages import BaseMessage, AIMessage, ToolMessage, HumanMe
 from langchain_openai import ChatOpenAI
 
 from config import AVAILABLE_MODELS
-from tools import TOOLS
+from tools import TOOLS, mec_llm_diagnose_device
+from llm_gateway import get_chat_model, invoke_messages, switch_model as gateway_switch_model
+from request_router import route_request
 
 
 # ──────────────────────────────────────────────
@@ -63,35 +65,23 @@ def _build_error_msg(error_str: str, error_type: str, status_code, api_code) -> 
     return f"LLM 请求异常，无法生成完整分析。{debug}"
 
 # ──────────────────────────────────────────────
-# Model switching (per-session via ContextVar)
+# Model switching (request-scoped through the unified gateway)
 # ──────────────────────────────────────────────
-from contextvars import ContextVar
-
-# Default model — first entry in AVAILABLE_MODELS
-_DEFAULT_MODEL_ID = next(iter(AVAILABLE_MODELS))
-_DEFAULT_MODEL_CFG = AVAILABLE_MODELS[_DEFAULT_MODEL_ID]
-
-_current_model_id: ContextVar[str] = ContextVar("_current_model_id", default=_DEFAULT_MODEL_ID)
-_current_api_key: ContextVar[str] = ContextVar("_current_api_key", default=_DEFAULT_MODEL_CFG["api_key"])
-_current_base_url: ContextVar[str] = ContextVar("_current_base_url", default=_DEFAULT_MODEL_CFG["base_url"])
-
 
 def switch_model(model_id: str) -> bool:
-    """Switch LLM model for the current session (ContextVar-isolated).
+    ok = gateway_switch_model(model_id)
+    if ok:
+        cfg = AVAILABLE_MODELS[model_id]
+        logger.info("🔄 切换模型: %s (%s)", model_id, cfg.get("label", ""))
+    return ok
 
-    Returns True if switch was successful, False if model_id is unknown.
-    Does NOT rebuild the LangGraph graph — _get_llm() will pick up the new config
-    on next call.
-    """
-    cfg = AVAILABLE_MODELS.get(model_id)
-    if not cfg:
-        logger.warning("未知模型: %s，可用: %s", model_id, list(AVAILABLE_MODELS.keys()))
-        return False
-    _current_model_id.set(model_id)
-    _current_api_key.set(cfg["api_key"])
-    _current_base_url.set(cfg["base_url"])
-    logger.info("🔄 切换模型: %s (%s)", model_id, cfg.get("label", ""))
-    return True
+
+def _get_llm():
+    return get_chat_model(timeout=45, max_tokens=4096)
+
+
+def _get_llm_with_tools():
+    return get_chat_model(with_tools=True, tools=TOOLS, timeout=45, max_tokens=4096)
 
 
 # ──────────────────────────────────────────────
@@ -114,6 +104,8 @@ class AgentState(TypedDict):
     auto_correctness: Optional[int]
     request_project: str
     request_ip: str
+    route_hint: Optional[str]
+    deep_analysis_done: bool
 
 
 def extract_explicit_request_context(text: str) -> tuple[str, str]:
@@ -195,12 +187,87 @@ def _get_llm():
 
 
 # ──────────────────────────────────────────────
+# Deterministic request/result routing
+# ──────────────────────────────────────────────
+
+def route_request_node(state: AgentState) -> dict:
+    messages = state.get("messages", [])
+    last_user = next(
+        (m.content for m in reversed(messages) if isinstance(m, HumanMessage)),
+        "",
+    )
+    hint = route_request(last_user)
+    return {
+        "route_hint": hint.get("route", "general"),
+        "deep_analysis_done": False,
+    }
+
+
+def post_tool_router_node(state: AgentState) -> dict:
+    """Use the structured diagnosis result to deterministically decide on deep analysis."""
+    if state.get("deep_analysis_done"):
+        return {}
+
+    messages = state.get("messages", [])
+    last_tool = next(
+        (m for m in reversed(messages) if isinstance(m, ToolMessage)),
+        None,
+    )
+    if not last_tool or getattr(last_tool, "name", "") != "mec_diagnose_device":
+        return {}
+
+    try:
+        result = json.loads(last_tool.content)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+
+    if result.get("type") != "diagnose_device_result":
+        return {}
+
+    if not result.get("deep_analysis_recommended"):
+        return {"deep_analysis_done": True}
+
+    ip = result.get("ip") or result.get("entity", {}).get("ip", "")
+    project = result.get("project") or result.get("entity", {}).get("project", "")
+    if not ip:
+        return {"deep_analysis_done": True}
+
+    try:
+        output = mec_llm_diagnose_device.invoke({"ip": ip, "project": project})
+    except Exception as exc:
+        logger.exception("确定性深度诊断调用失败: %s", exc)
+        output = json.dumps({
+            "schema_version": "1.0",
+            "type": "deep_diagnosis_result",
+            "status": "warning",
+            "stage": "deep",
+            "entity": {"ip": ip, "project": project},
+            "ip": ip,
+            "project": project,
+            "next_action": "report",
+            "analysis": "",
+            "error": str(exc)[:500],
+        }, ensure_ascii=False)
+
+    return {
+        "messages": [
+            ToolMessage(
+                content=str(output),
+                tool_call_id=f"router-deep-{int(time.time() * 1000)}",
+                name="mec_llm_diagnose_device",
+            )
+        ],
+        "deep_analysis_done": True,
+    }
+
+
+# ──────────────────────────────────────────────
 # Agent node: LLM decides which tool to call or responds directly
 # ──────────────────────────────────────────────
 def agent_node(state: AgentState) -> dict:
     """Call LLM with conversation history and bound tools."""
     messages = state["messages"]
-    _, llm_with_tools = _get_llm()
+    llm_with_tools = _get_llm_with_tools()
 
     # Keep the system prompt compact. Tool schemas are the source of truth.
     system_prompt = """你是智慧交通/MEC运维智能体。首要原则：**先用工具获得事实，再回答；不要凭空猜设备、项目、状态或根因。**
@@ -266,6 +333,10 @@ def agent_node(state: AgentState) -> dict:
             ctx_parts.append(f"最近操作项目: {ctx_project}")
         system_prompt += f"\n\n当前对话上下文：{'，'.join(ctx_parts)}"
 
+    route_hint = state.get("route_hint", "")
+    if route_hint:
+        system_prompt += f"\n\n本轮确定性路由提示：{route_hint}。请优先选择与该路由一致的工具；若当前用户请求与提示不一致，以当前请求的明确内容为准。"
+
     # Inject user memory
     from config import get_current_user_id
     from user_memory_store import get_user_memories
@@ -298,62 +369,42 @@ def agent_node(state: AgentState) -> dict:
     msg_count = len(all_messages)
     msg_chars = sum(len(str(m)) for m in all_messages)
     user_label = f"用户={user_id}" if user_id else "用户=未知"
-    logger.info("🚀 [USER:%s] LLM invoke 开始 | 消息数=%d | 字符数=%d | 用户消息=%s",
-                   user_label, msg_count, msg_chars,
-                   (messages[-1].content[:80] if messages else ''))
+    logger.info(
+        "🚀 [USER:%s] LLM invoke 开始 | 消息数=%d | 字符数=%d | 用户消息=%s",
+        user_label, msg_count, msg_chars,
+        (messages[-1].content[:80] if messages else "")
+    )
     try:
-        response = llm_with_tools.invoke(all_messages)
-    except Exception as e:
-        import traceback
-        error_str = str(e)
-        _t1 = time.time()
-        error_type = type(e).__name__
-        tb_str = traceback.format_exc()
-
-        # 提取关键信息：status_code、error code 等
-        status_code = getattr(e, 'status_code', None) or getattr(e, 'http_status', None)
-        api_code = getattr(e, 'code', None) or getattr(e, 'api_code', '')
-        body_text = getattr(e, 'body', None) or getattr(e, 'message', '')
-
-        logger.error("❌ LLM invoke 失败 | 耗时=%.1fs | 类型=%s | status=%s | api_code=%s\n  错误=%s\n  栈=%s",
-                     _t1 - _t0, error_type, status_code, api_code,
-                     error_str[:300], tb_str)
-
-        # 重试条件：超时/限流/400参数错误/内容安全
-        error_lower = error_str.lower()
-        should_retry = (
-            "400" in error_str or "invalidparameter" in error_lower
-            or "timeout" in error_lower or "timed out" in error_lower
-            or status_code == 429 or "quota" in error_lower
-            or status_code == 502 or status_code == 503
-            or "sensitive" in error_lower
+        response = invoke_messages(
+            all_messages,
+            with_tools=True,
+            tools=TOOLS,
+            timeout=45,
+            max_tokens=4096,
+            retry=1,
         )
-        if should_retry:
-            logger.info("Retrying LLM invoke with minimal messages...")
-            trimmed = messages[-6:] if len(messages) > 6 else messages
-            fallback_messages = [("system", system_prompt)] + trimmed
-            _t2 = time.time()
-            try:
-                response = llm_with_tools.invoke(fallback_messages)
-                logger.info("[TIMING] LLM retry 成功 | 耗时=%.1fs", time.time() - _t2)
-            except Exception as e2:
-                logger.error("❌ LLM retry 也失败 | 耗时=%.1fs | 类型=%s | 错误=%s\n%s",
-                             time.time() - _t2, type(e2).__name__, str(e2)[:200], traceback.format_exc())
-                from langchain_core.messages import AIMessage
-                response = AIMessage(content=_build_error_msg(error_str, error_type, status_code, api_code))
-        else:
-            from langchain_core.messages import AIMessage
-            response = AIMessage(content=_build_error_msg(error_str, error_type, status_code, api_code))
+    except Exception as exc:
+        logger.exception("❌ LLM gateway 失败 | 耗时=%.1fs", time.time() - _t0)
+        response = AIMessage(content=_build_error_msg(
+            str(exc), type(exc).__name__,
+            getattr(exc, "status_code", None),
+            ""
+        ))
+
     _t1 = time.time()
-    tool_calls = getattr(response, 'tool_calls', None)
+    tool_calls = getattr(response, "tool_calls", None)
     if tool_calls:
-        names = [tc.get('name', '?') for tc in tool_calls]
-        args = [tc.get('args', {}) for tc in tool_calls]
-        logger.info("[TIMING] LLM invoke 完成 | 耗时=%.1fs | 工具=%s | 参数=%s", _t1 - _t0, names, args)
+        names = [tc.get("name", "?") for tc in tool_calls]
+        logger.info("[TIMING] LLM invoke 完成 | 耗时=%.1fs | 工具=%s",
+                    _t1 - _t0, names)
     else:
-        content_preview = (response.content[:100] if hasattr(response, 'content') and response.content else '')
-        logger.info("[TIMING] LLM invoke 完成 | 耗时=%.1fs | 直接回复=%s", _t1 - _t0, content_preview[:60])
-    return {"messages": [response]}
+        content_preview = (
+            response.content[:100]
+            if hasattr(response, "content") and isinstance(response.content, str)
+            else ""
+        )
+        logger.info("[TIMING] LLM invoke 完成 | 耗时=%.1fs | 直接回复=%s",
+                    _t1 - _t0, content_preview[:60])
 
 
 # ──────────────────────────────────────────────
@@ -431,10 +482,13 @@ def build_agent():
 
     graph.add_node("agent", agent_node)
     graph.add_node("tools", tool_node)
+    graph.add_node("route_request", route_request_node)
+    graph.add_node("post_tool_router", post_tool_router_node)
     graph.add_node("update_context", update_context_node)
     graph.add_node("feedback", feedback_node)
 
-    graph.set_entry_point("agent")
+    graph.set_entry_point("route_request")
+    graph.add_edge("route_request", "agent")
 
     graph.add_conditional_edges(
         "agent",
@@ -446,7 +500,8 @@ def build_agent():
         }
     )
 
-    graph.add_edge("tools", "agent")
+    graph.add_edge("tools", "post_tool_router")
+    graph.add_edge("post_tool_router", "agent")
     graph.add_edge("update_context", "feedback")
     graph.add_edge("feedback", END)
 
@@ -454,27 +509,30 @@ def build_agent():
 
 
 async def build_agent_async():
-    """Build and compile the LangGraph agent with in-memory checkpointer.
+    """Build the production agent with a persistent async SQLite checkpointer."""
+    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+    from config import CHECKPOINT_DB_PATH
 
-    Uses MemorySaver (no SQLite) — avoids AsyncSqliteSaver thread check errors
-    introduced in langgraph-checkpoint-sqlite >= 3.0.
-    Session history is kept in process memory per thread_id.
-    """
-    from langgraph.checkpoint.memory import MemorySaver
-    memory = MemorySaver()
-    graph = build_agent_with_checkpointer(memory)
-    return graph, memory
+    cm = AsyncSqliteSaver.from_conn_string(str(CHECKPOINT_DB_PATH))
+    checkpointer = await cm.__aenter__()
+    graph = build_agent_with_checkpointer(checkpointer)
+    return graph, (checkpointer, cm)
 
 
 def build_agent_with_checkpointer(memory):
     """Build and compile the LangGraph agent with a given checkpointer."""
     tool_node = ToolNode(TOOLS)
     graph = StateGraph(AgentState)
+
+    graph.add_node("route_request", route_request_node)
     graph.add_node("agent", agent_node)
     graph.add_node("tools", tool_node)
+    graph.add_node("post_tool_router", post_tool_router_node)
     graph.add_node("update_context", update_context_node)
     graph.add_node("feedback", feedback_node)
-    graph.set_entry_point("agent")
+
+    graph.set_entry_point("route_request")
+    graph.add_edge("route_request", "agent")
     graph.add_conditional_edges(
         "agent",
         should_continue,
@@ -482,9 +540,10 @@ def build_agent_with_checkpointer(memory):
             "tools": "tools",
             "update_context": "update_context",
             "__end__": "update_context",
-        }
+        },
     )
-    graph.add_edge("tools", "agent")
+    graph.add_edge("tools", "post_tool_router")
+    graph.add_edge("post_tool_router", "agent")
     graph.add_edge("update_context", "feedback")
     graph.add_edge("feedback", END)
     return graph.compile(checkpointer=memory)
