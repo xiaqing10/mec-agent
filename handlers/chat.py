@@ -392,6 +392,23 @@ async def handle_chat_stream(request):
                 await _send("tool_end", {"name": name})
                 output_text = output.content if hasattr(output, 'content') else str(output)
                 has_llm_output = output_text and output_text != "None"
+                if name == "mec_repair_device":
+                    try:
+                        repair_data = json.loads(output_text)
+                        if repair_data.get("status") == "pending_confirmation":
+                            from repair_authorization import issue_repair_grant
+                            grant = issue_repair_grant(
+                                user_id=_get_username(request) or session_id,
+                                session_id=session_id,
+                                ip=repair_data.get("device_ip", ""),
+                                action=repair_data.get("action", ""),
+                                target=repair_data.get("target", ""),
+                            )
+                            repair_data.update(grant)
+                            output_text = json.dumps(repair_data, ensure_ascii=False)
+                    except (TypeError, json.JSONDecodeError) as exc:
+                        logger.warning("修复方案解析失败，无法签发一次性授权: %s", exc)
+
                 if name == "mec_diagnose_device":
                     try:
                         diag = json.loads(output_text)
