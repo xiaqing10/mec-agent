@@ -1,5 +1,9 @@
 # 智慧交通垂域智能体
 
+**版本：`v4.0-debug · LangGraph`**
+
+> 本版本仅对应 `fix/agent-runtime-isolation` 分支，用于与 `main` 的 `v3.2debug · LangGraph` 版本明确区分。
+
 MEC边缘计算设备的AI诊断与监控系统，基于 LangGraph Agent 框架。
 
 ---
