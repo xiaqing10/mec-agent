@@ -558,6 +558,11 @@ var currentSessionId = null;
 var loggedIn = false;
 
 function renderMD(text) {
+  // LLM/SSE occasionally returns escaped line breaks (\\n) instead of real newlines.
+  // Normalize them before Markdown parsing so paragraphs, lists and tables render normally.
+  if (text == null) text = '';
+  if (typeof text !== 'string') text = String(text);
+  text = text.replace(/\\r\\n/g, '\\n').replace(/\\n/g, '\\n').replace(/\\t/g, '\\t');
   var html = md.render(text);
   // 用 highlight.js 高亮代码块
   var tmp = document.createElement('div');
@@ -726,10 +731,16 @@ async function sendMessage() {
   }
   if (window._streamController) return;
   btn.disabled = true;
-  var requestSessionId = currentSessionId;
 
   var session = getCurrentSession();
   if (!session) { newSession(); session = getCurrentSession(); }
+  // Resolve the session after newSession(), never send an empty/stale thread id.
+  var requestSessionId = session ? session.id : currentSessionId;
+  if (!requestSessionId) {
+    btn.disabled = false;
+    addMsgToDOM('error', '当前会话初始化失败，请点击“新对话”后重试。', {}, true);
+    return;
+  }
   session.messages.push({ type: 'user', content: msg });
   saveSessions();
   addMsgToDOM('user', msg, {});
@@ -740,6 +751,10 @@ async function sendMessage() {
   var toolCount = 0;
   window._streamingFullText = '';
   var controller = new AbortController();
+  // Keep the controller in a single global slot so the UI can reliably stop a
+  // running request and so stale streams cannot permanently disable the input.
+  window._streamController = controller;
+  window._stoppedByUser = false;
   var timeoutId = setTimeout(function() { controller.abort(); }, 120000);
 
 try {
@@ -796,6 +811,12 @@ try {
         window._streamingFullText = '';
       }
     }
+
+    // Every exit path (success, busy, timeout, network error, cancellation)
+    // must release the browser-side busy state.
+    clearTimeout(timeoutId);
+    if (window._streamController === controller) window._streamController = null;
+    btn.disabled = false;
 
   function handleEvent(type, data) {
     try {
