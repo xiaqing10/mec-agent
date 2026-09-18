@@ -117,7 +117,7 @@ def feishu_llm_analyze_logs(project: str = "") -> str:
             {"role": "user", "content": prompt}
         ],
         "temperature": 0.3,
-        "max_tokens": 16384
+        "max_tokens": 4096
     }
     req = urllib.request.Request(
         url,
@@ -125,7 +125,7 @@ def feishu_llm_analyze_logs(project: str = "") -> str:
         headers={"Authorization": f"Bearer {LLM_API_KEY}", "Content-Type": "application/json"}
     )
     try:
-        resp = urllib.request.urlopen(req, timeout=120)
+        resp = urllib.request.urlopen(req, timeout=45)
         data = json.loads(resp.read().decode())
         content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
         if content:
