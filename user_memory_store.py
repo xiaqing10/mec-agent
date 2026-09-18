@@ -173,18 +173,25 @@ def extract_memories_from_conversation(user_id: str, user_message: str, ai_reply
         return
     user_lower = user_message.lower()
 
-    memory_rules = [
-        ("preference", "关注项目", lambda: _extract_project_preference(user_message)),
-        ("preference", "报告格式", lambda: _extract_format_preference(user_message)),
-        ("habit", "关注维度", lambda: _extract_dimension_preference(user_message)),
-        ("habit", "常用操作", lambda: _extract_operation_preference(user_message, intent)),
-        ("preference", "告警偏好", lambda: _extract_alert_preference(user_message)),
-    ]
+    # Automatic memory writes require an explicit long-term preference signal.
+    # A one-off query such as "诊断德会" must never become "常关注项目".
+    explicit_signal = any(marker in user_message for marker in (
+        "记住", "以后", "今后", "默认", "我习惯", "我喜欢", "我偏好", "通常都",
+        "长期", "每次", "都要", "不要再", "请保持"
+    ))
+    if explicit_signal:
+        memory_rules = [
+            ("preference", "关注项目", lambda: _extract_project_preference(user_message)),
+            ("preference", "报告格式", lambda: _extract_format_preference(user_message)),
+            ("habit", "关注维度", lambda: _extract_dimension_preference(user_message)),
+            ("habit", "常用操作", lambda: _extract_operation_preference(user_message, intent)),
+            ("preference", "告警偏好", lambda: _extract_alert_preference(user_message)),
+        ]
 
-    for fact_type, key, extractor in memory_rules:
-        value = extractor()
-        if value:
-            upsert_memory(user_id, fact_type, key, value, source="auto", confidence=3)
+        for fact_type, key, extractor in memory_rules:
+            value = extractor()
+            if value:
+                upsert_memory(user_id, fact_type, key, value, source="auto", confidence=3)
 
     if "记住" in user_message and len(user_message) > 4:
         parts = user_message.split("记住", 1)
