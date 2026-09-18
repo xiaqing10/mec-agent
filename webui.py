@@ -559,19 +559,37 @@ var loggedIn = false;
 
 function repairFlattenedMarkdown(text) {
   if (!text || typeof text !== 'string') return text || '';
-  // Only repair unmistakable block-level Markdown markers when an upstream
-  // stream has collapsed real newlines. Normal prose is left untouched.
+  // Repair only unmistakable block-level damage from flattened model output.
   var s = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
-  // Headings glued directly after prose or table rows.
-  s = s.replace(/([^\n])\s*(#{2,6}\s+)/g, '$1\n\n$2');
+  // Protect fenced code blocks so table/list repairs never alter code.
+  var fenced = [];
+  var fenceRe = new RegExp('(^|\\n)(' + bt + bt + bt + '[^\\n]*\\n[\\s\\S]*?' + bt + bt + bt + ')(?=\\n|$)', 'gm');
+  s = s.replace(fenceRe, function(_, prefix, block) {
+    var marker = '\\u0000MD_FENCE_' + fenced.length + '\\u0000';
+    fenced.push(block);
+    return prefix + marker;
+  });
 
-  // Markdown tables: restore a lost newline before the separator row.
-  s = s.replace(/\|\s*([^\n|]+(?:\|[^\n|]+)+)\|\s*\|?\s*-{3,}/g, '|$1|\n|------');
+  // Some model responses escape table pipes as \\|. Unescape only when the
+  // surrounding text has an unmistakable table-like pipe structure.
+  var tableLike = /(^|\n|#{2,6}\s[^\n]*)[^\n]*\\|[^\n]*(?:\|[^\n]*){2,}/;
+  if (tableLike.test(s)) {
+    s = s.replace(/\\\\\|/g, '|');
+    // Flattened tables commonly collapse row boundaries into double pipes.
+    s = s.replace(/\|\|/g, '|\n|');
+  }
 
-  // Common list markers glued to the previous sentence/row.
+  // Restore headings, including headings that arrived without a space after '#'.
+  s = s.replace(/([^\n])\s*(#{2,6})(?!#)\s*/g, '$1\n\n$2 ');
+  s = s.replace(/(^|\n)(#{2,6})(?!#)([^ \n#])/g, '$1$2 $3');
+
+  // Restore common list markers glued to the previous sentence/row.
   s = s.replace(/([^\n])\s+([-*]\s+|\d+[.)]\s+)/g, '$1\n$2');
 
+  s = s.replace(/\u0000MD_FENCE_(\d+)\u0000/g, function(_, index) {
+    return fenced[Number(index)];
+  });
   return s;
 }
 
