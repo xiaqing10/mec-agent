@@ -1062,7 +1062,6 @@ try {
     } catch(e) { console.error('handleEvent error', e); }
   }
 
-  window._streamController = controller;
 }
 
 var currentRating = null;
