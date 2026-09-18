@@ -431,6 +431,7 @@ def agent_node(state: AgentState) -> dict:
         logger.info("[TIMING] LLM invoke 完成 | 耗时=%.1fs | 直接回复=%s",
                     _t1 - _t0, content_preview[:60])
 
+    return {"messages": [response]}
 
 # ──────────────────────────────────────────────
 # Post-tool node: update context from tool results
