@@ -616,6 +616,13 @@ function repairFlattenedMarkdown(text) {
   // Restore common list markers glued to the previous sentence/row.
   s = s.replace(/([^\n])\s+([-*]\s+|\d+[.)]\s+)/g, '$1\n$2');
 
+  // Numbered findings can arrive as "1.**结论**" or "点1.**结论**".
+  // Markdown requires whitespace after the ordered-list marker; split the
+  // item from preceding prose and insert that whitespace only for bold-led
+  // numbered items, avoiding changes to ordinary numeric text such as IPs.
+  s = s.replace(/([^\n])\s*(\d+[.)])(?=\*\*)/g, '$1\n$2 ');
+  s = s.replace(/(^|\n)(\d+[.)])(?=\*\*)/g, '$1$2 ');
+
   s = s.replace(/__MD_FENCE_(\d+)__/g, function(_, index) {
     return fenced[Number(index)];
   });
