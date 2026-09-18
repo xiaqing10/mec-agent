@@ -12,6 +12,7 @@ Architecture:
   State (messages + last_ip/last_project) persisted via AsyncSqliteSaver (SQLite)
 """
 
+import asyncio
 import json
 import sys
 import time
@@ -227,7 +228,7 @@ def route_request_node(state: AgentState) -> dict:
     }
 
 
-def post_tool_router_node(state: AgentState) -> dict:
+async def post_tool_router_node(state: AgentState) -> dict:
     model_id = state.get("request_model") or ""
     if model_id:
         from llm_gateway import switch_model
@@ -264,7 +265,7 @@ def post_tool_router_node(state: AgentState) -> dict:
         return {"deep_analysis_done": True}
 
     try:
-        output = mec_llm_diagnose_device.invoke({"ip": ip, "project": project})
+        output = await asyncio.to_thread(mec_llm_diagnose_device.invoke, {"ip": ip, "project": project})
     except Exception as exc:
         logger.exception("确定性深度诊断调用失败: %s", exc)
         output = json.dumps({
@@ -293,7 +294,7 @@ def post_tool_router_node(state: AgentState) -> dict:
 # ──────────────────────────────────────────────
 # Agent node: LLM decides which tool to call or responds directly
 # ──────────────────────────────────────────────
-def agent_node(state: AgentState) -> dict:
+async def agent_node(state: AgentState) -> dict:
     """Call LLM with conversation history and bound tools."""
     messages = state["messages"]
     route_hint = state.get("route_hint", "general")
@@ -404,7 +405,7 @@ def agent_node(state: AgentState) -> dict:
         (messages[-1].content[:80] if messages else "")
     )
     try:
-        response = invoke_messages(
+        response = await asyncio.to_thread(invoke_messages,
             all_messages,
             with_tools=True,
             tools=selected_tools,
