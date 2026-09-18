@@ -31,13 +31,33 @@ async def handle_repair_execute(request):
     ip = body.get("ip", "")
     action = body.get("action", "")
     target = body.get("target", "")
+    session_id = body.get("session_id", "default")
+    repair_token = body.get("repair_token", "")
 
-    if not ip or not action:
-        return web.json_response({"success": False, "error": "ip和action为必填"}, status=400)
+    if not ip or not action or not repair_token:
+        return web.json_response(
+            {"success": False, "error": "ip、action和repair_token为必填"},
+            status=400,
+        )
 
-    logger.info("Repair execute: user=%s, ip=%s, action=%s, target=%s", username, ip, action, target)
+    from repair_authorization import consume_repair_grant
+    ok, reason = consume_repair_grant(
+        token=repair_token,
+        user_id=username,
+        session_id=session_id,
+        ip=ip,
+        action=action,
+        target=target,
+    )
+    if not ok:
+        return web.json_response({"success": False, "error": reason}, status=403)
 
-    result = execute_repair(ip, action, target)
+    logger.info(
+        "Repair execute authorized: user=%s, session=%s, ip=%s, action=%s, target=%s",
+        username, session_id, ip, action, target,
+    )
+
+    result = await __import__("asyncio").to_thread(execute_repair, ip, action, target)
 
     log_entry = {
         "user": username,
