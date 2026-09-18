@@ -14,6 +14,7 @@ Architecture:
 
 import asyncio
 import json
+import os
 import sys
 import time
 import logging
@@ -229,11 +230,11 @@ def route_request_node(state: AgentState) -> dict:
 
 
 async def post_tool_router_node(state: AgentState) -> dict:
+    """Use the structured diagnosis result to deterministically decide on deep analysis."""
     model_id = state.get("request_model") or ""
     if model_id:
         from llm_gateway import switch_model
         switch_model(model_id)
-    """Use the structured diagnosis result to deterministically decide on deep analysis."""
     if state.get("deep_analysis_done"):
         return {}
 
@@ -542,6 +543,7 @@ def build_agent():
 
 async def build_agent_async():
     """Build the production agent with a persistent async SQLite checkpointer."""
+    os.environ.setdefault("LANGGRAPH_STRICT_MSGPACK", "true")
     from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
     from config import CHECKPOINT_DB_PATH
 
