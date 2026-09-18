@@ -261,7 +261,7 @@ Agent 的基础 System Prompt 已从 `agent.py` 中移出，默认位于 `prompt
 | 维度 | 检查内容 |
 |------|---------|
 | 物理机 | SSH 可达性、运行时间、硬盘占用率（`/` 和 `/data`） |
-| 物理机离线 | 飞书报告中的物理机离线设备（独立于容器/图片问题，优先级最高） |
+| 物理机可达性 | 物理机 SSH、容器 SSH、Docker Exec 按统一访问策略判定；物理机 SSH 失败不直接等价于设备不可达 |
 | 容器 | Docker 运行状态、SSH 连接 |
 | 进程 | supervisor 进程状态、日志错误分析（驱动异常/ROS连接失败/OOM） |
 | ROS | roscore 运行状态、topic 频率 |
