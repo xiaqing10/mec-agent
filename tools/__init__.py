@@ -1,4 +1,4 @@
-from ._shared import set_diag_progress_callback, _notify_progress, _summarize_log_errors, _build_diag_result
+from ._shared import set_diag_progress_callback, reset_diag_progress_callback, get_diag_progress_callback, _notify_progress, _summarize_log_errors, _build_diag_result
 from ._diag_cache import cache_diag_data, get_diag_cache, clear_diag_cache
 from .tool_device import mec_diagnose_device, mec_device_info, mec_llm_diagnose_device
 from .tool_project import mec_diagnose_project, feishu_analyze_logs, feishu_llm_analyze_logs
@@ -49,7 +49,7 @@ TOOLS = [
 
 __all__ = [
     "TOOLS",
-    "set_diag_progress_callback",
+    "set_diag_progress_callback", "reset_diag_progress_callback", "get_diag_progress_callback",
     "mec_diagnose_device", "mec_device_info", "mec_llm_diagnose_device",
     "mec_diagnose_project", "feishu_analyze_logs", "feishu_llm_analyze_logs",
     "query_mec_abnormal", "query_mec_device_from_db", "query_mec_project_from_db",
