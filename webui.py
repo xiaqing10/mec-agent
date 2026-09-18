@@ -564,9 +564,9 @@ function repairFlattenedMarkdown(text) {
 
   // Protect fenced code blocks so table/list repairs never alter code.
   var fenced = [];
-  var fenceRe = new RegExp('(^|\\n)(' + bt + bt + bt + '[^\\n]*\\n[\\s\\S]*?' + bt + bt + bt + ')(?=\\n|$)', 'gm');
+  var fenceChar = String.fromCharCode(96);
   s = s.replace(fenceRe, function(_, prefix, block) {
-    var marker = '\\u0000MD_FENCE_' + fenced.length + '\\u0000';
+    var marker = '__MD_FENCE_' + fenced.length + '__';
     fenced.push(block);
     return prefix + marker;
   });
@@ -587,7 +587,7 @@ function repairFlattenedMarkdown(text) {
   // Restore common list markers glued to the previous sentence/row.
   s = s.replace(/([^\n])\s+([-*]\s+|\d+[.)]\s+)/g, '$1\n$2');
 
-  s = s.replace(/\u0000MD_FENCE_(\d+)\u0000/g, function(_, index) {
+  s = s.replace(/__MD_FENCE_(\d+)__/g, function(_, index) {
     return fenced[Number(index)];
   });
   return s;
