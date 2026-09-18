@@ -536,7 +536,19 @@ def mec_diagnose_device(ip: str, project: str = "") -> str:
         },
     })
 
-    return _build_diag_result(ip, dimensions, root_cause if has_error else "", project=effective_project)
+    return _build_diag_result(
+        ip,
+        dimensions,
+        root_cause if has_error else "",
+        project=effective_project,
+        access={
+            "device_reachable": bool(access.get("device_reachable")),
+            "physical_ssh": bool(access.get("physical_ssh")),
+            "container_ssh": bool(access.get("container_ssh")),
+            "docker_exec": bool(access.get("docker_exec")),
+            "access_mode": access.get("access_mode", "none"),
+        },
+    )
 
 
 @tool
