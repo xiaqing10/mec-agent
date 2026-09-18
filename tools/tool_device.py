@@ -716,7 +716,8 @@ def mec_llm_diagnose_device(ip: str, project: str = "") -> str:
     # Reuse the basic diagnosis cache when it is still fresh; otherwise collect once.
     from ._diag_cache import get_diag_cache
     cached = get_diag_cache(ip)
-    if cached and cached.get("raw_data"):
+    cache_project = (cached or {}).get("project", "") if cached else ""
+    if cached and cached.get("raw_data") and (not project or not cache_project or cache_project == project):
         raw_data = dict(cached.get("raw_data", {}))
         raw_data["device_reachable"] = not bool(cached.get("unreachable"))
         raw_data.setdefault("access_mode", "cached")
