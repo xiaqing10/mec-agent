@@ -19,7 +19,7 @@ async def handle_webui(request):
     html = WEBUI_HTML.replace('__API_KEY__', json.dumps(API_KEY))
     html = html.replace('__FEEDBACK_DELAY__', str(FEEDBACK_DELAY_SECONDS * 1000))
     html = html.replace('__AVAILABLE_MODELS__', json.dumps(AVAILABLE_MODELS, ensure_ascii=False))
-    return web.Response(text=html, content_type='text/html')
+    return web.Response(text=html, content_type='text/html', headers={'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0', 'Pragma': 'no-cache'})
 
 
 WEBUI_HTML = r'''<!DOCTYPE html>
@@ -706,27 +706,25 @@ function newSession() {
   document.getElementById('msgInput').focus();
 }
 
-var WELCOME_HTML = '<div class="msg bot"><div class="bubble">' +
-  renderMD('## 🚦 智慧交通垂域智能体 已就绪\n\n' +
-    '> 系统已加载 **27 个工具**，覆盖设备诊断、日志分析、数据查询与远程操作。\n\n' +
-    '### 📡 能力矩阵\n' +
-    '| 能力 | 示例指令 |\n' +
-    '|------|---------|\n' +
-    '| 🔍 **设备诊断** | `诊断设备 10.145.4.1` — 6 维度 SSH 深度扫描 |\n' +
-    '| 📊 **项目总览** | `查看德会项目状态` — 批量诊断项目下所有异常设备 |\n' +
-    '| ⚠️ **异常监控** | `查看所有异常设备` — 异常统计与分级概览 |\n' +
-    '| 📋 **日志分析** | `分析日志` — P0-P3 分级告警与趋势变化 |\n' +
-    '| 🖥️ **设备信息** | `查询设备 10.145.4.1` — CPU/内存/硬盘/网络指标 |\n' +
-    '| 🔬 **深度分析** | 诊断后自动触发 — LLM 根因分析与修复建议 |\n' +
-    '| 🔗 **钉钉推送** | `推送到钉钉` — 结果实时通知 |\n' +
-    '| 🛠️ **远程操作** | 支持 SSH 命令、容器重启、缓存清理等 |\n\n' +
-    '> 💡 点击右上角 `📖 指南` 查看完整工具说明，或直接输入问题开始诊断。') +
-  '</div></div>';
+var WELCOME_MARKDOWN = '## 🚦 智慧交通垂域智能体 已就绪\n\n' +
+  '> 系统已加载 **27 个工具**，覆盖设备诊断、日志分析、数据查询与远程操作。\n\n' +
+  '### 📡 能力矩阵\n' +
+  '| 能力 | 示例指令 |\n' +
+  '|------|---------|\n' +
+  '| 🔍 **设备诊断** | 诊断设备 10.145.4.1 — 6 维度 SSH 深度扫描 |\n' +
+  '| 📊 **项目总览** | 查看德会项目状态 — 批量诊断项目下所有异常设备 |\n' +
+  '| ⚠️ **异常监控** | 查看所有异常设备 — 异常统计与分级概览 |\n' +
+  '| 📋 **日志分析** | 分析日志 — P0-P3 分级告警与趋势变化 |\n' +
+  '| 🖥️ **设备信息** | 查询设备 10.145.4.1 — CPU/内存/硬盘/网络指标 |\n' +
+  '| 🔬 **深度分析** | 诊断后自动触发 — LLM 根因分析与修复建议 |\n' +
+  '| 🔗 **钉钉推送** | 推送到钉钉 — 结果实时通知 |\n' +
+  '| 🛠️ **远程操作** | 支持 SSH 命令、容器重启等 |\n\n' +
+  '> 💡 点击右上角 📖 指南 查看完整工具说明，或直接输入问题开始诊断。';
 
 function showWelcome() {
   var area = document.getElementById('chatArea');
   if (area.children.length === 0) {
-    area.innerHTML = WELCOME_HTML;
+    area.innerHTML = '<div class="msg bot"><div class="bubble">' + renderMD(WELCOME_MARKDOWN) + '</div></div>';
   }
 }
 
