@@ -328,3 +328,10 @@ LangGraph 当前使用 `AsyncSqliteSaver` 持久化会话状态；SQLite checkpo
 ## Memory 工具边界
 
 `memory` 已作为 LangGraph Tool 注册，但仍遵循用户级隔离。记忆用于长期偏好/事实/习惯，不用于覆盖当前请求的 project/IP；当前请求上下文始终优先于 memory。一次性诊断查询不会自动写入长期偏好。
+
+
+## Web UI 首屏 Markdown 与缓存
+
+- Web UI 首屏欢迎页统一走与聊天消息相同的 renderMD() Markdown 渲染链路，避免欢迎页直接注入未解析的 Markdown。
+- 欢迎页改为运行时渲染，不再依赖预渲染 HTML。
+- Web UI 响应增加 no-store / no-cache 缓存控制，避免浏览器继续使用旧版页面导致前端修复看起来没有生效。
