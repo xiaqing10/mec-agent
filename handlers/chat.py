@@ -11,6 +11,15 @@ _agent_checkpointer_ctx = None
 _agent_lock = asyncio.Lock()
 _agent_init_time_since_init = [None]
 _active_runs: dict[str, asyncio.Task] = {}  # session_id -> Task
+_session_locks: dict[str, asyncio.Lock] = {}
+_MAX_SESSION_LOCKS = 1000
+
+def _get_session_lock(session_id: str) -> asyncio.Lock:
+    lock = _session_locks.get(session_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _session_locks[session_id] = lock
+    return lock
 
 _STOP_KEYWORDS = ["/stop", "停止", "取消", "终止", "停下"]
 _MAX_MSG_CHARS = 40000
@@ -141,7 +150,11 @@ async def handle_chat(request):
     if username:
         set_current_user_id(username)
 
+    lock = _get_session_lock(session_id)
+    acquired = False
     try:
+        await lock.acquire()
+        acquired = True
         from langchain_core.messages import HumanMessage
         agent = await get_agent()
         config = {"configurable": {"thread_id": session_id, "recursion_limit": 50}}
@@ -185,6 +198,8 @@ async def handle_chat(request):
         logger.error("❌ LangGraph执行失败: %s | 类型=%s", str(e), type(e).__name__, exc_info=True)
         return web.json_response({"success": False, "error": f"处理失败: {str(e)}"}, status=500)
     finally:
+        if acquired:
+            lock.release()
         try:
             username = _get_username(request)
             if username and not _is_trivial(user_message):
@@ -246,8 +261,12 @@ async def handle_chat_stream(request):
         return response
 
     _active_runs[session_id] = current_task
+    lock = _get_session_lock(session_id)
+    acquired = False
 
     try:
+        await lock.acquire()
+        acquired = True
         from langchain_core.messages import HumanMessage
 
         if _agent is None:
@@ -273,11 +292,11 @@ async def handle_chat_stream(request):
         drain_task = None
         _disconnected = False
 
-        from tools import set_diag_progress_callback
+        from tools import set_diag_progress_callback, reset_diag_progress_callback
         progress_list = []
         def _on_diag_progress(name, status, detail):
             progress_list.append({"name": name, "status": status, "detail": detail})
-        set_diag_progress_callback(_on_diag_progress)
+        progress_callback_token = set_diag_progress_callback(_on_diag_progress)
 
         async def _drain_progress_loop():
             last_len = 0
@@ -426,6 +445,13 @@ async def handle_chat_stream(request):
                 pass
 
     finally:
+        try:
+            if 'progress_callback_token' in locals():
+                reset_diag_progress_callback(progress_callback_token)
+        except Exception:
+            pass
+        if acquired:
+            lock.release()
         _active_runs.pop(session_id, None)
 
     return response
