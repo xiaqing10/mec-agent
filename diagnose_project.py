@@ -8,15 +8,11 @@ MEC项目诊断模块 - 对指定项目进行设备诊断
 """
 import sys
 import json
-import time
 import re
 from pathlib import Path
-from datetime import datetime, timezone, timedelta
-from collections import defaultdict
+from datetime import datetime
 
 SELF_AGENT_DIR = Path(__file__).parent
-LLM_PENDING_DIR = SELF_AGENT_DIR / "diagnose_logs" / "llm_pending"
-
 
 def fetch_mec_report_from_feishu():
     sys.path.insert(0, str(SELF_AGENT_DIR))
