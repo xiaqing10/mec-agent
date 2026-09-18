@@ -15,32 +15,41 @@ def get_current_user_id() -> str:
     return _current_user_id.get()
 
 
+# 生产环境必须通过环境变量提供密钥；不再在代码中定义可轮换的共享凭据。
+VOLCENGINE_API_KEY = os.getenv("VOLCENGINE_API_KEY", "")
+BAIDU_API_KEY = os.getenv("BAIDU_API_KEY", "")
+
+# LangGraph 对话检查点持久化路径。
+CHECKPOINT_DB_PATH = Path(
+    os.getenv("CHECKPOINT_DB_PATH", str(SELF_AGENT_DIR / "checkpoints.db"))
+)
+
 # 可用模型配置
 AVAILABLE_MODELS = {
     "deepseek-v4-flash": {
         "label": "DeepSeek V4 Flash（火山）",
         "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
-        "api_key": "a385d094-7f69-41e0-b3b8-6c773877e97b"
+        "api_key": VOLCENGINE_API_KEY"
     },
     "glm-5.1": {
         "label": "GLM-5.1（火山）",
         "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
-        "api_key": "a385d094-7f69-41e0-b3b8-6c773877e97b"
+        "api_key": VOLCENGINE_API_KEY"
     },
     "deepseek-v4-pro": {
         "label": "deepseek-v4-pro（火山）",
         "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
-        "api_key": "a385d094-7f69-41e0-b3b8-6c773877e97b"
+        "api_key": VOLCENGINE_API_KEY"
     },
     "deepseek-v4-flash-baidu": {
         "label": "DeepSeek V4 Flash（百度云）",
         "base_url": "https://qianfan.baidubce.com/v2/coding",
-        "api_key": "bce-v3/ALTAKSP-8rIUW18KeRfA0NloMkZvX/f8158fdb129ce95064be0550ec888e737416ba39"
+        "api_key": BAIDU_API_KEY"
     },
     "deepseek-v4-pro-baidu": {
         "label": "DeepSeek V4 Pro（百度云）",
         "base_url": "https://qianfan.baidubce.com/v2/coding",
-        "api_key": "bce-v3/ALTAKSP-8rIUW18KeRfA0NloMkZvX/f8158fdb129ce95064be0550ec888e737416ba39"
+        "api_key": BAIDU_API_KEY"
     }
 }
 
