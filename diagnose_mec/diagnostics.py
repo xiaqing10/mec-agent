@@ -175,21 +175,43 @@ def diagnose_zero_images(host_ip: str, container_ssh_info=None, progress_cb=None
     physical_user = None
     ssh_password = ""
 
+    container_ssh_password = ""
     if container_ssh_info:
         method = container_ssh_info.get("method", "")
         if method == "direct_key":
-            logger.info("   [维度2已知] 容器公钥可用，跳过连通性检查")
-            stdout, stderr, code = ssh_exec(host_ip, CONTAINER_PORT, CONTAINER_USER, "echo 'OK'", exec_timeout=10)
+            logger.info("   [统一访问上下文] 容器公钥可用")
+            stdout, stderr, code = ssh_exec(
+                host_ip, CONTAINER_PORT, CONTAINER_USER,
+                "echo 'OK'", exec_timeout=8
+            )
             container_ssh_password = ""
+            if code == 0 and "OK" in stdout:
+                result["diagnosis"]["container_access"] = "direct_ssh"
         elif method == "direct_password":
-            logger.info("   [维度2已知] 容器密码可用，跳过公钥尝试")
+            logger.info("   [统一访问上下文] 容器密码可用")
             dev_password = container_ssh_info.get("password", "")
             stdout, stderr, code = ssh_exec(
-                host_ip, CONTAINER_PORT, CONTAINER_USER, "echo 'OK'",
-                exec_timeout=10, password=dev_password
+                host_ip, CONTAINER_PORT, CONTAINER_USER,
+                "echo 'OK'", exec_timeout=8, password=dev_password
             )
-            container_ssh_password = dev_password if dev_password else ""
-        else:
+            container_ssh_password = dev_password
+            if code == 0 and "OK" in stdout:
+                result["diagnosis"]["container_access"] = "direct_ssh"
+        elif method == "docker_exec":
+            logger.info("   [统一访问上下文] docker exec 可用")
+            use_docker_exec = True
+            physical_user = container_ssh_info.get("login_user", "")
+            ssh_password = container_ssh_info.get("ssh_password", "")
+            stdout, stderr, code = _docker_exec_cmd(
+                host_ip, physical_user,
+                "echo OK", exec_timeout=8, password=ssh_password
+            )
+            if code == 0 and "OK" in stdout:
+                result["diagnosis"]["container_access"] = "docker_exec"
+                result["diagnosis"]["container_ssh_fallback"] = "docker exec"
+
+        if code != 0 or "OK" not in stdout:
+            # The caller-provided path was not usable; fall back to the normal bounded resolver.
             container_ssh_info = None
 
     if not container_ssh_info:
