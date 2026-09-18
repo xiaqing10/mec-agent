@@ -116,6 +116,28 @@ class AgentState(TypedDict):
     request_ip: str
 
 
+def extract_explicit_request_context(text: str) -> tuple[str, str]:
+    """Extract only explicit project/IP references from the current user turn."""
+    import re
+    text = text or ""
+    ip_match = re.search(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', text)
+    ip = ip_match.group(0) if ip_match else ""
+    project = ""
+    patterns = [
+        r'(?:项目|工程)[：:\s]*([A-Za-z0-9_\-\u4e00-\u9fff]{2,32})',
+        r'([A-Za-z0-9_\-\u4e00-\u9fff]{2,32})项目',
+        r'(?:切换到|切换至|改查|换到|换查)[：:\s]*([A-Za-z0-9_\-\u4e00-\u9fff]{2,32})',
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, text)
+        if m:
+            candidate = m.group(1).strip()
+            if candidate not in {"这个", "当前", "该项目", "一下", "状态"}:
+                project = candidate
+                break
+    return project, ip
+
+
 def _extract_context_from_messages(messages: list) -> tuple:
     """Extract last_ip and last_project from the most recent ToolMessage."""
     ip, project = "", ""
