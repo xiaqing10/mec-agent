@@ -41,9 +41,10 @@ async def handle_repair_execute(request):
         )
 
     from repair_authorization import consume_repair_grant
+    repair_user_id = username or session_id
     ok, reason = consume_repair_grant(
         token=repair_token,
-        user_id=username,
+        user_id=repair_user_id,
         session_id=session_id,
         ip=ip,
         action=action,
