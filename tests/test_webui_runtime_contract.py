@@ -84,6 +84,15 @@ def test_webui_repairs_escaped_flattened_tables():
     assert "Split only when the heading line clearly contains" in source
     assert "s = s.replace(/(^|\\n)(#{2,6} [^\\n|]+)(\\|[^\\n]+\\|)" in source
 
+def test_webui_repairs_shifted_table_rows():
+    source = WEBUI.read_text(encoding="utf-8")
+    assert "shift a row one column" in source
+    assert "MEC device name" in source
+    assert "((?:\\d{1,3}\\.){3}\\d{1,3})" in source
+    assert "device.trim()" in source
+    assert "ip.trim()" in source
+
+
 def test_webui_markdown_repair_declares_fence_regex():
     source = _read_webui()
     assert "var fenceRe = new RegExp(" in source
