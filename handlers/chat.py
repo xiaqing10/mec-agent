@@ -168,8 +168,15 @@ async def handle_chat(request):
                         len(trimmed), _count_msg_chars(trimmed))
             agent.update_state(config, {"messages": trimmed})
 
+        from agent import extract_explicit_request_context
+        req_project, req_ip = extract_explicit_request_context(user_message)
         final_state = await agent.ainvoke(
-            {"messages": [HumanMessage(content=user_message)]},
+            {"messages": [HumanMessage(content=user_message)],
+             "request_project": req_project,
+             "request_ip": req_ip,
+             # Explicitly named entities override stale inherited context.
+             "last_project": req_project,
+             "last_ip": req_ip},
             config
         )
         reply = _fix_table_alignment(_extract_agent_reply(final_state) or "处理完成，但未生成回复。")
@@ -321,8 +328,14 @@ async def handle_chat_stream(request):
                         len(trimmed), _count_msg_chars(trimmed))
             agent.update_state(config, {"messages": trimmed})
 
+        from agent import extract_explicit_request_context
+        req_project, req_ip = extract_explicit_request_context(user_message)
         async for event in agent.astream_events(
-            {"messages": [HumanMessage(content=user_message)]},
+            {"messages": [HumanMessage(content=user_message)],
+             "request_project": req_project,
+             "request_ip": req_ip,
+             "last_project": req_project,
+             "last_ip": req_ip},
             config,
             version="v2"
         ):
