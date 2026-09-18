@@ -36,6 +36,11 @@ def _text(value: Any) -> str:
     return str(value).strip()
 
 
+def content_to_text(value: Any) -> str:
+    """Normalize model/tool content to displayable text."""
+    return _text(value)
+
+
 def _dedupe(items: Iterable[str]) -> list[str]:
     result: list[str] = []
     seen = set()
@@ -158,4 +163,5 @@ __all__ = [
     "build_deterministic_fallback",
     "collect_turn_tool_context",
     "ensure_non_empty_response",
+    "content_to_text",
 ]
