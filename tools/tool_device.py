@@ -40,6 +40,7 @@ def mec_diagnose_device(ip: str, project: str = "") -> str:
         return json.dumps({"error": msg}, ensure_ascii=False)
 
     dimensions = []
+    fallback_img = None
 
     cont = diagnose_container_offline(ip, progress_cb=get_diag_progress_callback())
     cd = cont.get("diagnosis", {})
@@ -47,23 +48,63 @@ def mec_diagnose_device(ip: str, project: str = "") -> str:
     ce = cd.get("error", "")
 
     if ce:
-        _notify_progress("物理机", "error", ce[:80])
-        dimensions.append({"name": "物理机", "status": "error", "detail": ce, "problem": "ssh_unreachable"})
-        for dim_name in ["容器", "进程", "主题+日志", "今日事件数", "传感器"]:
-            dimensions.append({"name": dim_name, "status": "skip", "detail": "物理机不可达，跳过"})
-        db_info = get_device_db_info(ip)
-        db_detail = format_device_db_info(db_info)
-        if db_detail:
-            dimensions.append({"name": "数据库记录", "status": "warning", "detail": db_detail})
-        if "Permission denied" in ce or "公钥" in ce:
-            dimensions.append({"name": "登录建议", "status": "warning", "detail": "公钥认证失败，已尝试密码登录也失败。可能原因：1)设备SSH配置不允许密码登录 2)密码已变更 3)网络中间层阻断"})
-        elif "超时" in ce or "Timeout" in ce.lower():
-            dimensions.append({"name": "网络建议", "status": "warning", "detail": "SSH连接超时，可能原因：1)设备关机或断网 2)网络路由不通 3)防火墙阻断SSH端口"})
-        from ._diag_cache import cache_diag_data
-        cache_diag_data(ip, {"physical_user": "", "login_method": "", "ssh_password": "", "unreachable": True})
-        return _build_diag_result(ip, dimensions, "physical_unreachable")
+        # Physical-host SSH is only one access path. Before declaring the
+        # device unreachable, try the MEC container SSH endpoint directly.
+        _notify_progress("物理机", "warning", "物理机SSH未登录成功，尝试容器10022端口直连...")
+        fallback_img = diagnose_zero_images(
+            ip, container_ssh_info=None, progress_cb=get_diag_progress_callback()
+        )
+        fallback_diag = fallback_img.get("diagnosis", {})
+        container_access = fallback_diag.get("container_access", "unavailable")
 
-    pu = cd.get("physical_uptime", "未知")
+        if container_access not in ("direct_ssh", "docker_exec"):
+            _notify_progress("物理机", "error", ce[:80])
+            dimensions.append({
+                "name": "物理机", "status": "error", "detail": ce,
+                "problem": "ssh_unreachable"
+            })
+            for dim_name in ["容器", "进程", "主题+日志", "今日事件数", "传感器"]:
+                dimensions.append({
+                    "name": dim_name, "status": "skip",
+                    "detail": "物理机和容器SSH均未建立连接"
+                })
+            db_info = get_device_db_info(ip)
+            db_detail = format_device_db_info(db_info)
+            if db_detail:
+                dimensions.append({"name": "数据库记录", "status": "warning", "detail": db_detail})
+            if "Permission denied" in ce or "公钥" in ce:
+                dimensions.append({
+                    "name": "登录建议", "status": "warning",
+                    "detail": "物理机SSH认证失败，但仍已尝试容器直连；可检查物理机SSH账号/密钥配置"
+                })
+            elif "超时" in ce or "Timeout" in ce.lower():
+                dimensions.append({
+                    "name": "网络建议", "status": "warning",
+                    "detail": "物理机SSH超时，且容器直连也未建立；建议检查网络、端口和防火墙"
+                })
+            from ._diag_cache import cache_diag_data
+            cache_diag_data(ip, {
+                "physical_user": "", "login_method": "",
+                "ssh_password": "", "unreachable": True
+            })
+            return _build_diag_result(ip, dimensions, "physical_unreachable")
+
+        _notify_progress("物理机", "warning", "物理机SSH不可用，但容器SSH可直接访问，继续诊断")
+        dimensions.append({
+            "name": "物理机", "status": "warning",
+            "detail": f"{ce}；但容器SSH（10022）可直接连接",
+            "problem": "physical_ssh_unavailable"
+        })
+        dimensions.append({
+            "name": "容器", "status": "ok",
+            "detail": "容器SSH（10022）直连成功，已绕过物理机SSH继续诊断"
+        })
+        cd = {}
+        pu = "物理机SSH不可用"
+        disk_root = ""
+        disk_data = ""
+    else:
+        pu = cd.get("physical_uptime", "未知")
     disk_root = cd.get("disk_root", "")
     disk_data = cd.get("disk_data", "")
     disk_detail_parts = [f"在线，运行 {pu}"]
@@ -192,9 +233,12 @@ def mec_diagnose_device(ip: str, project: str = "") -> str:
                               "ssh_password": cd.get("_ssh_password", ""), "docker_unavailable": True})
         return _build_diag_result(ip, dimensions, problem)
 
-    # 容器存在且SSH可达（或可fallback docker exec），继续采集内部数据
-    container_ssh_info = cd.get("_container_ssh_info")
-    img = diagnose_zero_images(ip, container_ssh_info=container_ssh_info, progress_cb=get_diag_progress_callback())
+    # 容器存在且SSH可达（或已通过物理机docker exec/容器直连）
+    container_ssh_info = cd.get("_container_ssh_info") if cd else None
+    img = fallback_img or diagnose_zero_images(
+        ip, container_ssh_info=container_ssh_info,
+        progress_cb=get_diag_progress_callback()
+    )
     iz = img.get("diagnosis", {})
     ic = iz.get("today_image_count", -1)
 
