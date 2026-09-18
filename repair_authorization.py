@@ -20,14 +20,19 @@ class RepairGrant:
     target: str
     expires_at: float
     used: bool = False
+    fingerprint: str = ""
 
 
 _lock = threading.Lock()
 _grants: dict[str, RepairGrant] = {}
 
 
+_PROCESS_SIGNING_KEY = secrets.token_bytes(32)
+
+
 def _signing_key() -> bytes:
-    return os.getenv("REPAIR_SIGNING_KEY", "change-me-repair-key").encode("utf-8")
+    configured = os.getenv("REPAIR_SIGNING_KEY", "").strip()
+    return configured.encode("utf-8") if configured else _PROCESS_SIGNING_KEY
 
 
 def _fingerprint(user_id: str, session_id: str, ip: str, action: str, target: str) -> str:
