@@ -1511,7 +1511,9 @@ function showRepairConfirm(data) {
     action: data.action,
     target: data.target || '',
     action_desc: data.action_desc,
-    command: data.command
+    command: data.command,
+    repair_token: data.repair_token || '',
+    expires_at: data.expires_at || 0
   }];
   currentRepairIndex = 0;
   renderRepairModal();
@@ -1553,7 +1555,13 @@ function confirmRepair() {
   fetch('/api/v1/repair/execute', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
-    body: JSON.stringify({ ip: r.ip, action: r.action, target: r.target })
+    body: JSON.stringify({
+      ip: r.ip,
+      action: r.action,
+      target: r.target,
+      repair_token: r.repair_token,
+      session_id: currentSessionId
+    })
   }).then(function(resp) { return resp.json(); }).then(function(d) {
     if (d.success) {
       el.innerHTML = '<div style="text-align:center;padding:20px;">' +
