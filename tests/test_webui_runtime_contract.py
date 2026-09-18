@@ -17,3 +17,8 @@ def test_webui_always_clears_stream_controller():
     assert "window._streamController = controller" in source
     assert "if (window._streamController === controller) window._streamController = null;" in source
     assert "btn.disabled = false;" in source
+
+
+def test_webui_does_not_restore_stale_stream_controller_after_send():
+    source = WEBUI.read_text(encoding="utf-8")
+    assert "window._streamController = controller;\n}\n\nvar currentRating" not in source
