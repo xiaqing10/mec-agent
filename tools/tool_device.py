@@ -474,6 +474,7 @@ def mec_diagnose_device(ip: str, project: str = "") -> str:
         "login_method": cd.get("_login_method", ""),
         "ssh_password": cd.get("_ssh_password", ""),
         "container_ssh_info": cd.get("_container_ssh_info"),
+        "project": effective_project,
         "physical_uptime": pu,
         "container_status": cs,
         "raw_data": {
