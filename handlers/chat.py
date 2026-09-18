@@ -103,8 +103,9 @@ def _extract_agent_reply(state: dict) -> str:
     for msg in reversed(messages):
         if getattr(msg, 'type', '') != 'ai':
             continue
-        content = getattr(msg, 'content', '')
-        if isinstance(content, str) and content.strip():
+        from response_fallback import content_to_text
+        content = content_to_text(getattr(msg, 'content', ''))
+        if content:
             return content
     return ""
 
@@ -387,12 +388,11 @@ async def handle_chat_stream(request):
 
             if kind == "on_chat_model_stream":
                 chunk = data.get("chunk", "")
+                from response_fallback import content_to_text
                 if hasattr(chunk, 'content'):
-                    content = chunk.content
-                elif isinstance(chunk, str):
-                    content = chunk
+                    content = content_to_text(chunk.content)
                 else:
-                    content = ""
+                    content = content_to_text(chunk)
                 if content:
                     last_ai_msg += content
                     await _send("token", {"content": content})
