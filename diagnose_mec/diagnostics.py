@@ -864,7 +864,7 @@ def _check_rostopic_hz(host_ip: str, result: dict, has_log_errors: bool) -> dict
     return result
 
 
-def collect_device_raw_data(host_ip: str) -> dict:
+def collect_device_raw_data(host_ip: str, project: str = "", access_info: dict | None = None) -> dict:
     logger.info("=" * 70)
     logger.info("📡 数据采集（LLM模式）: %s", host_ip)
     logger.info("=" * 70)
@@ -876,72 +876,108 @@ def collect_device_raw_data(host_ip: str) -> dict:
     }
     raw = result["raw_data"]
 
-    logger.info("🔐 步骤1: 物理机连通性...")
-    physical_user, login_method = find_physical_user(host_ip)
-    is_password_login = login_method == "password"
-    login_user = physical_user
+    logger.info("🔐 步骤1: 统一解析设备访问路径...")
+    from .ssh import resolve_device_access
+    access = access_info or resolve_device_access(host_ip)
 
-    if not login_user or (login_user not in PHYSICAL_USERS and not is_password_login):
-        raw["physical_ssh"] = f"连接失败: {host_ip}"
-        raw["container_ssh"] = "未尝试（物理机不可达）"
-        logger.warning("❌ 物理机无法连接")
-        return _add_sensor_status(result, host_ip)
-
-    login_method = "密码" if is_password_login else "公钥"
-    raw["physical_ssh"] = f"{login_user}@{host_ip}:22 连接成功 ({login_method})"
-
-    if is_password_login:
-        creds = _get_device_credentials(host_ip)
-        ssh_password = creds.get("pm_password") or creds.get("password", "")
-    else:
-        ssh_password = ""
-
-    logger.info("📦 一次SSH采集物理机信息...")
-    dc = _docker_cmd
-    phys_data = _combined_ssh(host_ip, 22, login_user, [
-        ("UPTIME", "cat /proc/uptime | awk '{print int($1/86400)\"天 \"int(($1%86400)/3600)\"小时\"}'"),
-        ("DOCKER_STATUS", dc(login_user, "systemctl is-active docker")),
-        ("DEV_CONTAINER", dc(login_user, "docker ps -a --filter name=dev --format='{{.Status}}|{{.CreatedAt}}' 2>&1")),
-    ], exec_timeout=30, password=ssh_password)
-
-    raw["physical_uptime"] = phys_data.get("UPTIME", "").strip() or "未知"
-    raw["docker_status"] = phys_data.get("DOCKER_STATUS", "").strip() or "未知"
-    dev_container_info = phys_data.get("DEV_CONTAINER", "").strip()
-    if dev_container_info:
-        parts = dev_container_info.split('|')
-        raw["container_status"] = parts[0].strip() if parts else dev_container_info
-        if len(parts) > 1 and parts[1].strip():
-            raw["container_started_at"] = parts[1].strip()[:19]
-    else:
-        raw["container_status"] = "未找到容器"
-
-    logger.info("🔑 步骤2: 容器SSH连通性...")
-    ssh_stdout, ssh_stderr, ssh_code = ssh_exec(
-        host_ip, CONTAINER_PORT, CONTAINER_USER, "echo 'SSH_OK'", exec_timeout=10
+    raw["device_reachable"] = bool(access.get("device_reachable"))
+    raw["access_mode"] = access.get("access_mode", "none")
+    raw["physical_ssh"] = (
+        f"{access.get('physical_user')}@{host_ip}:22 连接成功 "
+        f"({'密码' if access.get('login_method') == 'password' else '公钥'})"
+        if access.get("physical_ssh") else "不可用"
     )
-    if ssh_code != 0 or "SSH_OK" not in ssh_stdout:
-        cont_creds = _get_device_credentials(host_ip)
-        cont_pass = cont_creds.get("password", "")
-        if cont_pass:
-            logger.info("  🔄 容器公钥失败，尝试密码登录...")
-            ssh_stdout, ssh_stderr, ssh_code = ssh_exec(
-                host_ip, CONTAINER_PORT, CONTAINER_USER, "echo 'SSH_OK'", exec_timeout=10, password=cont_pass
-            )
-    if ssh_code != 0 or "SSH_OK" not in ssh_stdout:
-        raw["container_ssh"] = f"不可连接: {(ssh_stderr or ssh_stdout).strip()[:200]}"
-        logger.warning("❌ 容器SSH不可连接，采集到此为止")
-        return _add_sensor_status(result, host_ip)
+    raw["container_ssh"] = (
+        "10022 可连接" if access.get("container_ssh")
+        else "docker exec 可用" if access.get("docker_exec")
+        else "不可用"
+    )
 
-    raw["container_ssh"] = "可连接"
+    if not access.get("device_reachable"):
+        raw["error"] = access.get("error", "设备没有可用访问路径")
+        logger.warning("❌ 设备没有可用访问路径: %s", raw["error"])
+        return _add_sensor_status(result, host_ip, project)
+
+    physical_available = bool(access.get("physical_ssh"))
+    login_user = access.get("physical_user", "")
+    login_method = access.get("login_method", "")
+    ssh_password = access.get("ssh_password", "")
+    container_password = access.get("container_password", "")
+    access_mode = access.get("access_mode", "none")
+
+    def _run_container(command: str, exec_timeout: int = 30):
+        if access_mode == "docker_exec":
+            return _docker_exec_cmd(
+                host_ip, login_user, command,
+                exec_timeout=exec_timeout, password=ssh_password,
+            )
+        return ssh_exec(
+            host_ip, CONTAINER_PORT, CONTAINER_USER, command,
+            exec_timeout=exec_timeout, password=container_password,
+        )
+
+    if physical_available:
+        logger.info("📦 一次SSH采集物理机信息...")
+
+        dc = _docker_cmd
+        phys_data = _combined_ssh(host_ip, 22, login_user, [
+            ("UPTIME", "cat /proc/uptime | awk '{print int($1/86400)\"天 \"int(($1%86400)/3600)\"小时\"}'"),
+            ("DOCKER_STATUS", dc(login_user, "systemctl is-active docker")),
+            ("DEV_CONTAINER", dc(login_user, "docker ps -a --filter name=dev --format='{{.Status}}|{{.CreatedAt}}' 2>&1")),
+        ], exec_timeout=30, password=ssh_password)
+
+        raw["physical_uptime"] = phys_data.get("UPTIME", "").strip() or "未知"
+        raw["docker_status"] = phys_data.get("DOCKER_STATUS", "").strip() or "未知"
+        dev_container_info = phys_data.get("DEV_CONTAINER", "").strip()
+        if dev_container_info:
+            parts = dev_container_info.split('|')
+            raw["container_status"] = parts[0].strip() if parts else dev_container_info
+            if len(parts) > 1 and parts[1].strip():
+                raw["container_started_at"] = parts[1].strip()[:19]
+        else:
+            raw["container_status"] = "未找到容器"
+
+    logger.info("🔑 步骤2: 使用统一访问路径连接容器...")
+    if access_mode == "direct_container":
+        raw["container_ssh"] = "10022 可连接"
+    elif access_mode == "docker_exec":
+        raw["container_ssh"] = "docker exec 可用"
+    elif physical_available:
+        raw["container_ssh"] = "不可用"
+        raw["error"] = "物理机可达，但容器没有可用访问路径"
+        logger.warning("⚠️ 物理机可达但容器不可用")
+        return _add_sensor_status(result, host_ip, project)
 
     logger.info("📦 一次SSH采集容器初始数据...")
     today_str = datetime.now().strftime("%Y-%m-%d")
-    ctn_data = _combined_ssh(host_ip, CONTAINER_PORT, CONTAINER_USER, [
+    ctn_commands = [
         ("SUPERVISOR", "supervisorctl status 2>&1"),
         ("IMG_COUNT", f"find /home/files/nfsroot/{today_str}/ -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) 2>/dev/null | wc -l"),
         ("IMG_INFO", f"ls -lt --time-style='+%Y-%m-%d %H:%M:%S' /home/files/nfsroot/{today_str}/ 2>/dev/null | head -2"),
         ("GREP_CONF", "grep -hE 'stdout_logfile=|stderr_logfile=' /etc/supervisor/conf.d/*.conf 2>/dev/null | sort -u"),
-    ], exec_timeout=30)
+    ]
+    if access_mode == "direct_container":
+        ctn_data = _combined_ssh(
+            host_ip, CONTAINER_PORT, CONTAINER_USER, ctn_commands,
+            exec_timeout=30, password=container_password,
+        )
+    else:
+        marker = "===MKR==="
+        parts = [f"echo '{marker}{name}' && ({cmd}) 2>&1" for name, cmd in ctn_commands]
+        batch_stdout, _, _ = _run_container("; ".join(parts), exec_timeout=30)
+        ctn_data = {}
+        current_name, current_lines = None, []
+        for line in batch_stdout.split("\n"):
+            if line.startswith(marker):
+                if current_name:
+                    ctn_data[current_name] = "\n".join(current_lines).strip()
+                current_name = line[len(marker):]
+                current_lines = []
+            elif current_name is not None:
+                current_lines.append(line)
+        if current_name:
+            ctn_data[current_name] = "\n".join(current_lines).strip()
+
 
     raw["supervisor_raw"] = ctn_data.get("SUPERVISOR", "").strip() or "(无输出)"
 
@@ -960,6 +996,18 @@ def collect_device_raw_data(host_ip: str) -> dict:
                 break
 
     stdout_conf = ctn_data.get("GREP_CONF", "").strip()
+
+    if access_mode == "docker_exec":
+        result["_exec_ctx"] = {
+            "method": "docker_exec",
+            "login_user": login_user,
+            "ssh_password": ssh_password,
+        }
+    else:
+        result["_exec_ctx"] = {
+            "method": "direct",
+            "ssh_password": container_password,
+        }
 
     log_files = {}
     for line in stdout_conf.strip().split('\n'):
@@ -993,7 +1041,7 @@ def collect_device_raw_data(host_ip: str) -> dict:
             f"echo '__END__{proc_name}'"
         )
     combined_cmd = " ; ".join(log_parts)
-    stdout, _, _ = ssh_exec(host_ip, CONTAINER_PORT, CONTAINER_USER, combined_cmd, exec_timeout=20)
+    stdout, _, _ = _run_container(combined_cmd, exec_timeout=20)
 
     raw["log_snippets"] = {}
     if stdout.strip():
@@ -1038,7 +1086,7 @@ def collect_device_raw_data(host_ip: str) -> dict:
                 f"echo 'TOPIC:{topic}'; cat /tmp/hz_{safe_name}.txt 2>/dev/null; echo '---END---'"
             )
         parallel_cmd = " ".join(check_parts) + " wait; " + "; ".join(collect_parts)
-        stdout, _, _ = ssh_exec(host_ip, CONTAINER_PORT, CONTAINER_USER, parallel_cmd, exec_timeout=30)
+        stdout, _, _ = _run_container(parallel_cmd, exec_timeout=30)
 
         raw["topic_rates"] = {}
         current_topic = None
@@ -1063,5 +1111,6 @@ def collect_device_raw_data(host_ip: str) -> dict:
     except Exception:
         pass
 
+    result.pop("_exec_ctx", None)
     logger.info("✅ 数据采集完成")
-    return result
+    return _add_sensor_status(result, host_ip, project)
