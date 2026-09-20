@@ -572,7 +572,7 @@ async def build_agent_async():
 
 def build_agent_with_checkpointer(memory):
     """Build and compile the LangGraph agent with a given checkpointer."""
-    tool_node = ToolNode(TOOLS)
+    tool_node = ToolNode(AGENT_TOOLS)
     graph = StateGraph(AgentState)
 
     graph.add_node("route_request", route_request_node)
