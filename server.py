@@ -15,7 +15,7 @@ SELF_AGENT_DIR = Path(__file__).parent
 sys.path.insert(0, str(SELF_AGENT_DIR))
 os.chdir(str(SELF_AGENT_DIR))
 
-from config import API_HOST, API_PORT, SSL_CERT, SSL_KEY
+from config import API_HOST, API_PORT, SSL_CERT, SSL_KEY, AGENT_VERSION
 
 try:
     from aiohttp import web
@@ -54,7 +54,7 @@ async def handle_health(request):
 
 async def handle_version(request):
     return web.json_response({
-        "version": "3.3debug",
+        "version": AGENT_VERSION,
         "service": "智慧交通垂域智能体",
         "features": ["日志分析", "设备诊断", "钉钉推送", "流式输出", "Markdown渲染", "LangGraph持久记忆"]
     })
