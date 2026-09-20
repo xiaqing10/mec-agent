@@ -8,7 +8,7 @@ import logging
 import re
 from datetime import datetime
 
-from ._shared import (
+from diagnose_mec._shared import (
     get_diag_progress_callback,
     _notify_progress,
     _summarize_log_errors,
