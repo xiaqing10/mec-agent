@@ -1,8 +1,8 @@
 # 智慧交通垂域智能体
 
-**版本：`v4.0-debug · LangGraph`**
+**版本：`v5.0-architecture · LangGraph`**
 
-> 本版本仅对应 `fix/agent-runtime-isolation` 分支，用于与 `main` 的 `v3.2debug · LangGraph` 版本明确区分。
+> 本版本基于 `fix/agent-runtime-isolation` 新建 `refactor/deterministic-diagnosis-architecture`，用于完成确定性诊断架构重构；不修改 `main`。
 
 MEC边缘计算设备的AI诊断与监控系统，基于 LangGraph Agent 框架。
 
@@ -26,7 +26,7 @@ Web UI (webui.py) / API Client
    持久化: AsyncSqliteSaver → checkpoints.db
    recursion_limit: 顶层 invocation 配置
         ↓                    ↓
-  tools/ 包 (27个 Tool)    diagnose_mec/ 包 (SSH诊断引擎)
+  tools/ 包（LLM安全 Tool 白名单 + 内部执行 Tool）    diagnose_mec/ 包 (SSH诊断引擎)
    ├── tool_device          ├── diagnostics.py
    ├── tool_project         ├── parsers.py
    ├── tool_db (MySQL)      └── ssh.py
@@ -75,7 +75,7 @@ Web UI (webui.py) / API Client
 
 | 文件 | 工具 | 说明 |
 |------|------|------|
-| `tool_device.py` | `diagnose_device` | 单设备 6 维度 SSH 诊断（物理机/容器/进程/ROS/数据源/传感器） |
+| `tool_device.py` | `diagnose_device` | 内部确定性诊断实现；由 `diagnose_mec/workflow.py` 调用，不直接暴露给LLM |
 | `tool_context.py` | `resolve_mec_device` / `resolve_mec_project` | 确定性解析设备和项目，避免LLM猜测实体 |
 | | `device_info` | 设备详细指标查询（硬盘/内存/CPU/网络/运行时间/历史数据） |
 | | `llm_diagnose_device` | SSH 采集全部原始数据 + LLM 深度根因分析 |
@@ -85,7 +85,7 @@ Web UI (webui.py) / API Client
 | `tool_db.py` | `query_abnormal` | 查询异常设备统计 |
 | | `query_device_from_db` | MySQL 查询单台设备状态（无需 SSH，离线也能查历史记录） |
 | | `query_project_from_db` | MySQL 查询整个项目状态 |
-| `tool_ssh.py` | `ssh_exec_command` | 执行单个 SSH 只读命令（仅用于细粒度查询，不可替代 diagnose_device） |
+| `tool_ssh.py` | `ssh_exec_command` | 原始SSH执行原语，仅供受信任内部代码使用；不进入LLM Tool白名单 |
 | `tool_dingtalk.py` | `push_to_dingtalk` | 推送消息到钉钉 |
 | `tool_fetch.py` | `fetch_report` | 获取飞书监控报告原文 |
 | `tool_help.py` | `help_info` | 使用帮助 |
@@ -141,13 +141,53 @@ Web UI (webui.py) / API Client
 
 ---
 
+
+### 诊断架构边界
+
+当前分支的目标架构是：
+
+```text
+                 LLM Layer
+       意图理解 / 查询 / 结果解释
+                    │
+                    ▼
+             Agent Controller
+                    │
+       ┌────────────┴────────────┐
+       ▼                         ▼
+  Query Workflow          Diagnosis Workflow
+       │                         │
+       ▼                         ▼
+ DB/Event/Report      Physical / Container / Process
+                             │
+                       ROS / Sensor / Log
+                             │
+                             ▼
+                       Evidence Result
+                             │
+                       Root Cause Rules
+                             │
+                             ▼
+                         LLM Explain
+
+Infrastructure Layer
+ SSH / Docker / DB / Files / Network
+          ↑
+          │
+   trusted workflow only
+```
+
+这一区分解决了原架构中最重要的可靠性问题：网络、SSH、Docker、日志和进程操作属于确定性基础设施执行，不再由模型通过多轮 Tool Call 自由编排。模型只负责“理解用户要什么”和“如何解释已经获取的事实”。
+
 ## LangGraph 架构
 
 ### StateGraph 节点
 
 | 节点 | 功能 |
 |------|------|
-| `agent` | LLM 决策节点：加载外部 system prompt + 用户记忆 + 对话上下文，决定调用工具或直接回复 |
+| `route_request` | 确定性请求路由；诊断请求进入 Workflow，不交给LLM选择底层执行路径 |
+| `diagnosis_workflow` | 确定性诊断编排：目标解析 → 物理机/容器/进程/ROS/日志/传感器采集 → 结构化结果 |
+| `agent` | LLM解释节点：基于 Workflow/查询事实组织自然语言，不选择SSH/Docker/进程命令 |
 | `tools` | ToolNode：执行 agent 选中的工具，返回结果 |
 | `finalize_response` | 最终响应守门：AI `content` 为空/全空白时直接生成确定性兜底，不进行第二次 LLM 调用 |
 | `update_context` | 从工具结果中提取 `last_ip` / `last_project`，更新对话状态 |
@@ -254,15 +294,23 @@ Agent 的基础 System Prompt 已从 `agent.py` 中移出，默认位于 `prompt
 ```
 用户请求
   ↓
-实体解析（必要时 resolve_mec_device / resolve_mec_project）
+route_request（确定性识别）
   ↓
-选择确定性查询/诊断 Tool
+diagnosis_workflow
+  ├─ 设备目标解析
+  ├─ 访问路径解析（物理SSH / 容器SSH / docker exec）
+  ├─ Physical / Container / Process
+  ├─ ROS / Topic / Log
+  ├─ Image / Sensor
+  └─ 结构化证据 + 根因/症状分离
   ↓
-获取实时或数据库事实
+diagnosis_router
+  ├─ 基础结果足够 → report
+  └─ 满足规则 → 受控 LLM 深度分析
   ↓
-若基础诊断明确需要深度分析 → mec_llm_diagnose_device
+agent（只负责解释与对话）
   ↓
-输出：结论 → 关键证据 → 影响 → 建议
+结论 → 关键证据 → 影响 → 建议
 ```
 
 ### 诊断维度
