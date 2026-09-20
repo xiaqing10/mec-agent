@@ -65,3 +65,10 @@ def test_device_diagnosis_implementation_lives_outside_tool_module():
     assert "from diagnose_mec.device_diagnosis import run_device_diagnosis_collection" in tool_source
     assert tool_source.count("def mec_diagnose_device(") == 1
     assert len(domain_source) > 10000
+
+
+def test_chat_stream_json_safe_serializes_langchain_messages():
+    source = _source("handlers/chat.py")
+    assert "def _json_safe(value):" in source
+    assert 'payload = _json_safe(dict(data))' in source
+    assert "HumanMessage" in source
