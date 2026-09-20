@@ -82,3 +82,17 @@ def test_diagnosis_cache_has_canonical_module_and_compatibility_facade():
     assert "def get_diag_cache" in canonical
     assert "from diagnose_mec._diag_cache import" in facade
     assert "def cache_diag_data" not in facade
+
+
+def test_chat_handles_state_snapshot_and_agent_context_is_bounded():
+    repo_root = Path(__file__).resolve().parents[1]
+    chat = (repo_root / "handlers" / "chat.py").read_text(encoding="utf-8")
+    agent = (repo_root / "agent.py").read_text(encoding="utf-8")
+
+    assert "def _state_values(state)" in chat
+    assert "getattr(state, \"values\", None)" in chat
+    assert "def _compact_message_history" in agent
+    assert "max_messages: int = 12" in agent
+    assert "max_message_chars: int = 6000" in agent
+    assert "max_total_chars: int = 30000" in agent
+    assert "retry=0" in agent
