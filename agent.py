@@ -324,6 +324,57 @@ def diagnosis_workflow_node(state: AgentState) -> dict:
         "diagnosis_workflow_done": True,
     }
 
+def _compact_message_history(messages: list, *, max_messages: int = 12, max_message_chars: int = 6000, max_total_chars: int = 30000) -> list:
+    """Build a bounded model-input view without mutating persisted LangGraph state.
+
+    Checkpoint history may grow across a long session, and diagnosis ToolMessages can
+    contain large logs/metrics. Keep recent conversational structure but cap payload
+    size before every LLM call.
+    """
+    recent = list(messages[-max_messages:])
+    compacted = []
+    total = 0
+    for msg in recent:
+        content = getattr(msg, "content", "")
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, (dict, list, tuple)):
+            try:
+                text = json.dumps(content, ensure_ascii=False)
+            except (TypeError, ValueError):
+                text = str(content)
+        else:
+            text = str(content or "")
+
+        remaining = max_total_chars - total
+        if remaining <= 0:
+            break
+        limit = min(max_message_chars, remaining)
+        if len(text) > limit:
+            text = text[:max(0, limit - 80)] + "\\n...[上下文已裁剪]..."
+
+        if text != content and hasattr(msg, "model_copy"):
+            try:
+                msg = msg.model_copy(update={"content": text})
+            except Exception:
+                pass
+        elif text != content:
+            try:
+                import copy
+                msg = copy.copy(msg)
+                msg.content = text
+            except Exception:
+                pass
+        compacted.append(msg)
+        total += len(text)
+
+    if len(compacted) != len(recent) or total != sum(len(str(getattr(m, "content", ""))) for m in recent):
+        logger.info("模型上下文压缩: 原消息=%d条/%.1fk字符 → %d条/%.1fk字符",
+                    len(messages), sum(len(str(getattr(m, "content", ""))) for m in messages) / 1000,
+                    len(compacted), total / 1000)
+    return compacted
+
+
 # ──────────────────────────────────────────────
 # Agent node: LLM decides which tool to call or responds directly
 # ──────────────────────────────────────────────
@@ -377,10 +428,7 @@ async def agent_node(state: AgentState) -> dict:
 
     # Context-window trimming is a model-input view only. Never mutate the persisted
     # LangGraph message history: checkpoint state remains complete across turns.
-    MAX_HISTORY = 20
-    if len(messages) > MAX_HISTORY:
-        logger.info("本轮模型输入裁剪: %d 条 → 最近 %d 条（不修改 checkpoint）", len(messages), MAX_HISTORY)
-        messages = list(messages[-MAX_HISTORY:])
+    messages = _compact_message_history(messages)
     all_messages = [("system", system_prompt)] + messages
 
     _t0 = time.time()
