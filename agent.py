@@ -157,6 +157,8 @@ class AgentState(TypedDict):
     route_hint: Optional[str]
     deep_analysis_done: bool
     diagnosis_workflow_done: bool
+    last_diagnosis_summary: Optional[str]
+    conversation_context: dict
 
 
 def extract_explicit_request_context(text: str) -> tuple[str, str]:
@@ -324,60 +326,56 @@ def diagnosis_workflow_node(state: AgentState) -> dict:
         "diagnosis_workflow_done": True,
     }
 
-def _compact_message_history(messages: list, *, max_messages: int = 12, max_message_chars: int = 6000, max_total_chars: int = 30000) -> list:
-    """Build a bounded model-input view without mutating persisted LangGraph state.
+def _build_model_context(state: AgentState) -> str:
+    """Render authoritative structured context for the LLM."""
+    ctx = dict(state.get("conversation_context") or {})
+    ctx["device_ip"] = state.get("request_ip") or state.get("last_ip") or ctx.get("device_ip", "")
+    ctx["project"] = state.get("request_project") or state.get("last_project") or ctx.get("project", "")
+    ctx["route"] = state.get("route_hint") or ctx.get("route", "general")
+    diagnosis = state.get("last_diagnosis_summary")
+    if diagnosis:
+        ctx["last_diagnosis"] = diagnosis
+    ctx = {k: v for k, v in ctx.items() if v not in (None, "", [], {})}
+    return json.dumps(ctx, ensure_ascii=False, separators=(",", ":"))
 
-    Checkpoint history may grow across a long session, and diagnosis ToolMessages can
-    contain large logs/metrics. Keep recent conversational structure but cap payload
-    size before every LLM call.
-    """
-    recent = list(messages[-max_messages:])
-    compacted = []
-    total = 0
-    for msg in recent:
+
+def _select_model_messages(messages: list, *, prior_messages: int = 6) -> list:
+    """Keep the current turn's tool chain plus a short prior conversational tail."""
+    if not messages:
+        return []
+    last_human = max((i for i, m in enumerate(messages) if isinstance(m, HumanMessage)), default=0)
+    return list(messages[max(0, last_human - prior_messages):])
+
+
+def _compact_message_history(messages: list, *, max_message_chars: int = 6000, max_total_chars: int = 24000) -> list:
+    """Bound message payloads while preserving current-turn tool messages."""
+    selected = _select_model_messages(messages)
+    compacted, total = [], 0
+    for msg in selected:
         content = getattr(msg, "content", "")
-        if isinstance(content, str):
-            text = content
-        elif isinstance(content, (dict, list, tuple)):
-            try:
-                text = json.dumps(content, ensure_ascii=False)
-            except (TypeError, ValueError):
-                text = str(content)
-        else:
-            text = str(content or "")
-
+        text = content if isinstance(content, str) else str(content or "")
         remaining = max_total_chars - total
         if remaining <= 0:
             break
         limit = min(max_message_chars, remaining)
         if len(text) > limit:
-            text = text[:max(0, limit - 80)] + "\\n...[上下文已裁剪]..."
-
-        if text != content and hasattr(msg, "model_copy"):
+            text = text[:max(0, limit - 80)] + "\n...[上下文已裁剪]..."
+        if text != content:
             try:
                 msg = msg.model_copy(update={"content": text})
             except Exception:
-                pass
-        elif text != content:
-            try:
-                import copy
-                msg = copy.copy(msg)
-                msg.content = text
-            except Exception:
-                pass
+                try:
+                    import copy
+                    msg = copy.copy(msg)
+                    msg.content = text
+                except Exception:
+                    pass
         compacted.append(msg)
         total += len(text)
-
-    if len(compacted) != len(recent) or total != sum(len(str(getattr(m, "content", ""))) for m in recent):
-        logger.info("模型上下文压缩: 原消息=%d条/%.1fk字符 → %d条/%.1fk字符",
-                    len(messages), sum(len(str(getattr(m, "content", ""))) for m in messages) / 1000,
-                    len(compacted), total / 1000)
+    logger.info("模型上下文视图: checkpoint=%d条 → 当前轮+最近历史=%d条 / %.1fk字符", len(messages), len(compacted), total / 1000)
     return compacted
 
 
-# ──────────────────────────────────────────────
-# Agent node: LLM decides which tool to call or responds directly
-# ──────────────────────────────────────────────
 async def agent_node(state: AgentState) -> dict:
     """Call LLM with conversation history and bound tools."""
     messages = state["messages"]
@@ -392,16 +390,8 @@ async def agent_node(state: AgentState) -> dict:
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     system_prompt = f"当前真实时间：{now_str}\n\n{system_prompt}"
 
-    # Request-scoped context takes precedence; legacy last_* is fallback only.
-    ctx_ip = state.get("request_ip", "") or state.get("last_ip", "")
-    ctx_project = state.get("request_project", "") or state.get("last_project", "")
-    if ctx_ip or ctx_project:
-        ctx_parts = []
-        if ctx_ip:
-            ctx_parts.append(f"最近操作设备IP: {ctx_ip}")
-        if ctx_project:
-            ctx_parts.append(f"最近操作项目: {ctx_project}")
-        system_prompt += f"\n\n当前对话上下文：{'，'.join(ctx_parts)}"
+    # Structured context is authoritative; raw history is only conversational continuity.
+    system_prompt += "\n\n## 当前结构化上下文\n" + _build_model_context(state)
 
     if route_hint:
         system_prompt += f"\n\n本轮确定性路由提示：{route_hint}。请优先选择与该路由一致的工具；若当前用户请求与提示不一致，以当前请求的明确内容为准。"
