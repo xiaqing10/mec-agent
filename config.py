@@ -5,6 +5,9 @@ from pathlib import Path
 
 SELF_AGENT_DIR = Path(__file__).parent
 
+# Release identifier shared by API and Web UI.
+AGENT_VERSION = os.getenv("AGENT_VERSION", "5.0-architecture")
+
 # Thread-local current user ID for tools that need to know who is calling
 _current_user_id: ContextVar[str] = ContextVar("_current_user_id", default="")
 
