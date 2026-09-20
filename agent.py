@@ -85,20 +85,22 @@ def _get_llm():
 
 
 def _select_agent_tools(route: str):
+    """Return only conversational/query/action tools.
+
+    Device/project diagnosis is a deterministic workflow, not an LLM Tool.
+    SSH command execution is never exposed to the model.
+    """
     by_name = {getattr(t, "name", ""): t for t in TOOLS}
     common = ["resolve_mec_device", "resolve_mec_project", "help_info", "memory"]
     route_names = {
         "device_diagnosis": common + [
-            "mec_diagnose_device", "mec_device_info",
-            "query_mec_device_from_db", "query_mec_abnormal",
-            "mec_ssh_exec",
+            "mec_device_info", "query_mec_device_from_db", "query_mec_abnormal",
         ],
         "device_info": common + [
-            "mec_device_info", "query_mec_device_from_db", "mec_ssh_exec",
+            "mec_device_info", "query_mec_device_from_db",
         ],
         "project_diagnosis": common + [
-            "mec_diagnose_project", "query_mec_project_from_db",
-            "query_mec_abnormal", "feishu_analyze_logs",
+            "query_mec_project_from_db", "query_mec_abnormal", "feishu_analyze_logs",
         ],
         "mec_query": common + [
             "query_mec_abnormal", "query_mec_device_from_db",
@@ -112,29 +114,25 @@ def _select_agent_tools(route: str):
             "query_server_traffic_pattern", "query_server_analysis_report",
         ],
         "repair": common + [
-            "mec_diagnose_device", "mec_device_info",
-            "query_mec_device_from_db", "mec_repair_device",
+            "mec_device_info", "query_mec_device_from_db", "mec_repair_device",
         ],
         "report": common + [
             "feishu_analyze_logs", "feishu_fetch_report",
         ],
         "general": common + [
             "query_mec_abnormal", "query_mec_device_from_db",
-            "query_mec_project_from_db", "mec_diagnose_device",
-            "mec_device_info", "feishu_analyze_logs",
-            "feishu_fetch_report", "mec_diagnose_project",
+            "query_mec_project_from_db", "mec_device_info",
+            "feishu_analyze_logs", "feishu_fetch_report",
             "query_mec_event_records", "query_mec_project_event_stats",
             "query_server_traffic_flow", "query_server_events",
             "query_server_event_stats", "query_server_device_metrics",
             "query_server_traffic_pattern", "query_server_analysis_report",
-            "mec_repair_device", "push_to_dingtalk", "mec_ssh_exec",
+            "mec_repair_device", "push_to_dingtalk",
             "generate_improvement_report",
         ],
     }
     names = route_names.get(route, route_names["general"])
-    return [by_name[n] for n in dict.fromkeys(names) if n in by_name and n != "mec_llm_diagnose_device"]
-
-
+    return [by_name[n] for n in dict.fromkeys(names) if n in by_name]
 # ──────────────────────────────────────────────
 # State definition
 # ──────────────────────────────────────────────
@@ -228,6 +226,7 @@ def route_request_node(state: AgentState) -> dict:
     return {
         "route_hint": hint.get("route", "general"),
         "deep_analysis_done": False,
+        "diagnosis_workflow_done": False,
     }
 
 
@@ -275,6 +274,54 @@ async def post_tool_router_node(state: AgentState) -> dict:
         }
 
     return {"deep_analysis_done": True}
+
+# ──────────────────────────────────────────────
+# Deterministic diagnosis workflow
+# ──────────────────────────────────────────────
+def diagnosis_workflow_node(state: AgentState) -> dict:
+    """Execute device/project diagnosis without giving command selection to LLM."""
+    route = state.get("route_hint", "general")
+    if route not in {"device_diagnosis", "project_diagnosis"}:
+        return {"diagnosis_workflow_done": True}
+
+    from diagnose_mec.workflow import run_diagnosis
+    messages = state.get("messages", [])
+    last_user = next(
+        (m.content for m in reversed(messages) if isinstance(m, HumanMessage)),
+        "",
+    )
+    ip = state.get("request_ip") or state.get("last_ip") or ""
+    project = state.get("request_project") or state.get("last_project") or ""
+
+    if not ip:
+        import re
+        match = re.search(r"\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b", last_user)
+        if match:
+            ip = match.group(0)
+
+    if not project:
+        import re
+        match = re.search(r"(?:项目|工程)[：:\\s]*([A-Za-z0-9_\\-\\u4e00-\\u9fff]{2,32})", last_user)
+        if match:
+            project = match.group(1)
+
+    if route == "device_diagnosis" and not ip:
+        # Pass the most likely explicit device token; mec_diagnose_device performs
+        # deterministic DB resolution and rejects ambiguous names.
+        match = re.search(r"(?:诊断|排查|检查)\\s+([A-Za-z0-9_\\-.\\u4e00-\\u9fff]{2,64})", last_user)
+        if match:
+            ip = match.group(1)
+
+    result = run_diagnosis(route, ip=ip, project=project)
+    tool_name = "mec_diagnose_device" if route == "device_diagnosis" else "mec_diagnose_project"
+    return {
+        "messages": [ToolMessage(
+            content=json.dumps(result, ensure_ascii=False),
+            name=tool_name,
+            tool_call_id=f"deterministic_{tool_name}",
+        )],
+        "diagnosis_workflow_done": True,
+    }
 
 # ──────────────────────────────────────────────
 # Agent node: LLM decides which tool to call or responds directly
@@ -483,7 +530,12 @@ def build_agent():
     graph.add_node("feedback", feedback_node)
 
     graph.set_entry_point("route_request")
-    graph.add_edge("route_request", "agent")
+    graph.add_conditional_edges(
+        "route_request",
+        lambda state: "diagnosis_workflow" if state.get("route_hint") in {"device_diagnosis", "project_diagnosis"} else "agent",
+        {"diagnosis_workflow": "diagnosis_workflow", "agent": "agent"},
+    )
+    graph.add_edge("diagnosis_workflow", "post_tool_router")
 
     graph.add_conditional_edges(
         "agent",
@@ -522,6 +574,7 @@ def build_agent_with_checkpointer(memory):
     graph = StateGraph(AgentState)
 
     graph.add_node("route_request", route_request_node)
+    graph.add_node("diagnosis_workflow", diagnosis_workflow_node)
     graph.add_node("agent", agent_node)
     graph.add_node("tools", tool_node)
     graph.add_node("post_tool_router", post_tool_router_node)
@@ -530,7 +583,12 @@ def build_agent_with_checkpointer(memory):
     graph.add_node("feedback", feedback_node)
 
     graph.set_entry_point("route_request")
-    graph.add_edge("route_request", "agent")
+    graph.add_conditional_edges(
+        "route_request",
+        lambda state: "diagnosis_workflow" if state.get("route_hint") in {"device_diagnosis", "project_diagnosis"} else "agent",
+        {"diagnosis_workflow": "diagnosis_workflow", "agent": "agent"},
+    )
+    graph.add_edge("diagnosis_workflow", "post_tool_router")
     graph.add_conditional_edges(
         "agent",
         should_continue,
