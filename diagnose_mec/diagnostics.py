@@ -301,6 +301,7 @@ def diagnose_zero_images(host_ip: str, container_ssh_info=None, progress_cb=None
     if use_docker_exec:
         result["diagnosis"]["container_access"] = "docker_exec"
         docker_cmds = (
+            "echo '===CONTAINER_FS===' && opts=$(findmnt -no OPTIONS / 2>/dev/null || awk '$2==\"/\"{print $4; exit}' /proc/mounts); if [ -z \"$opts\" ]; then echo UNKNOWN; elif echo \"$opts\" | tr ',' '\\n' | grep -qx ro; then echo RO; else echo RW; fi; " +
             "echo '===SUPERVISOR===' && supervisorctl status 2>&1; "
             "echo '===ROSCORE===' && ps -ef | grep roscore | grep -v grep || echo 'ROSCORE_NOT_RUNNING'; "
             f"echo '===IMG_COUNT===' && find /home/files/nfsroot/{today_str}/ -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) 2>/dev/null | wc -l; "
@@ -310,12 +311,12 @@ def diagnose_zero_images(host_ip: str, container_ssh_info=None, progress_cb=None
         exec_full, _, _ = _docker_exec_cmd(host_ip, login_user, docker_cmds, exec_timeout=30, password=ssh_password)
         logger.info("DEBUG docker_cmds exec_full[:500] = %s", exec_full[:500])
         combined = {}
-        for marker in ["SUPERVISOR", "ROSCORE", "IMG_COUNT", "IMG_INFO", "GREP_CONF"]:
+        for marker in ["CONTAINER_FS", "SUPERVISOR", "ROSCORE", "IMG_COUNT", "IMG_INFO", "GREP_CONF"]:
             if f"==={marker}===" in exec_full:
                 parts = exec_full.split(f"==={marker}===")
                 remaining = parts[1] if len(parts) > 1 else ""
                 next_marker = None
-                for m in ["SUPERVISOR", "ROSCORE", "IMG_COUNT", "IMG_INFO", "GREP_CONF"]:
+                for m in ["CONTAINER_FS", "SUPERVISOR", "ROSCORE", "IMG_COUNT", "IMG_INFO", "GREP_CONF"]:
                     if m != marker and f"==={m}===" in remaining:
                         next_marker = f"==={m}==="
                         break
@@ -325,6 +326,7 @@ def diagnose_zero_images(host_ip: str, container_ssh_info=None, progress_cb=None
                     combined[marker] = remaining.strip()
     else:
         combined = _combined_ssh(host_ip, CONTAINER_PORT, CONTAINER_USER, [
+            ("CONTAINER_FS", "opts=$(findmnt -no OPTIONS / 2>/dev/null || awk '$2==\"/\"{print $4; exit}' /proc/mounts); if [ -z \"$opts\" ]; then echo UNKNOWN; elif echo \"$opts\" | tr ',' '\\n' | grep -qx ro; then echo RO; else echo RW; fi"),
             ("SUPERVISOR", "supervisorctl status 2>&1"),
             ("ROSCORE", "ps -ef | grep roscore | grep -v grep"),
             ("IMG_COUNT", f"find /home/files/nfsroot/{today_str}/ -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) 2>/dev/null | wc -l"),
@@ -336,6 +338,19 @@ def diagnose_zero_images(host_ip: str, container_ssh_info=None, progress_cb=None
     ros_raw = combined.get("ROSCORE", "").strip()
     img_count_raw = combined.get("IMG_COUNT", "").strip()
     img_info_raw = combined.get("IMG_INFO", "").strip()
+    container_fs_raw = combined.get("CONTAINER_FS", "").strip().upper()
+    if container_fs_raw == "RO":
+        result["diagnosis"]["container_filesystem_readonly"] = True
+        result["diagnosis"]["container_filesystem"] = "只读（RO）"
+        logger.warning("⚠️ 容器根文件系统为只读（RO）")
+    elif container_fs_raw == "RW":
+        result["diagnosis"]["container_filesystem_readonly"] = False
+        result["diagnosis"]["container_filesystem"] = "可写（RW）"
+        logger.info("✅ 容器根文件系统可写（RW）")
+    else:
+        result["diagnosis"]["container_filesystem_readonly"] = None
+        result["diagnosis"]["container_filesystem"] = "无法判断"
+        logger.warning("⚠️ 无法判断容器根文件系统读写状态: %s", container_fs_raw or "无输出")
     grep_conf_raw = combined.get("GREP_CONF", "").strip()
 
     try:
@@ -1089,7 +1104,7 @@ def collect_device_raw_data(host_ip: str, project: str = "", access_info: dict |
 
     TOPIC_SUFFIXES = [
         'track_object', 'image_raw', 'track_object_project',
-        'image_detect/compressed', 'fusion_track_object',
+        'image_detect_object', 'fusion_track_object',
         'traffic_event_object/fps_hz'
     ]
     key_topics = [t for t in raw["rostopic_list"] if any(t.endswith(s) for s in TOPIC_SUFFIXES)]
