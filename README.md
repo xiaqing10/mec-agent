@@ -146,49 +146,15 @@ Web UI (webui.py) / API Client
 
 ### 长会话上下文保护
 
-生产 Agent 使用 LangGraph SQLite checkpoint 保存完整会话状态，但**不会把完整历史原样发送给 LLM**。每次模型调用都会建立独立的输入视图：
+生产 Agent 使用 LangGraph SQLite checkpoint 保存完整会话状态，但 LLM 不再把完整 checkpoint 历史当作上下文发送。
 
-- 最近消息窗口限制为 12 条；
-- 单条消息最多约 6,000 字符；
-- 单次模型上下文最多约 30,000 字符；
-- 超长诊断日志/ToolMessage 只裁剪模型输入，不修改 checkpoint 中的原始状态；
-- 交互式 Agent LLM 调用不再自动重试一次，避免单次超时从约 45 秒放大到约 90 秒；
-- SSE 收尾同时兼容 LangGraph 的普通 dict state 和 StateSnapshot，LLM 超时后仍能生成确定性兜底回复。## 诊断架构边界
+当前模型上下文分为三层：
 
-当前分支的目标架构是：
+- **结构化上下文**：当前请求、路由、设备 IP、项目、最近一次诊断摘要，由 AgentState 明确维护；
+- **当前轮消息链**：保留当前用户请求及本轮必要的 AI/Tool 消息，保证工具调用链完整；
+- **少量历史消息**：仅保留当前轮之前的短尾部，用于自然语言连续性。
 
-```text
-                 LLM Layer
-       意图理解 / 查询 / 结果解释
-                    │
-                    ▼
-             Agent Controller
-                    │
-       ┌────────────┴────────────┐
-       ▼                         ▼
-  Query Workflow          Diagnosis Workflow
-       │                         │
-       ▼                         ▼
- DB/Event/Report      Physical / Container / Process
-                             │
-                       ROS / Sensor / Log
-                             │
-                             ▼
-                       Evidence Result
-                             │
-                       Root Cause Rules
-                             │
-                             ▼
-                         LLM Explain
-
-Infrastructure Layer
- SSH / Docker / DB / Files / Network
-          ↑
-          │
-   trusted workflow only
-```
-
-这一区分解决了原架构中最重要的可靠性问题：网络、SSH、Docker、日志和进程操作属于确定性基础设施执行，不再由模型通过多轮 Tool Call 自由编排。模型只负责“理解用户要什么”和“如何解释已经获取的事实”。
+模型输入仍有硬性字符上限，超长诊断日志只裁剪模型输入，不修改 checkpoint 原始状态。这样长期会话不会依赖 LLM 从几十条历史消息中自行寻找设备、项目和诊断事实。
 
 ## LangGraph 架构
 
