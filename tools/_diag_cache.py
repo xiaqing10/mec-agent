@@ -1,35 +1,13 @@
-import time
-import threading
+"""Compatibility facade for the canonical diagnosis cache.
 
-_CACHE_TTL = 120
+The actual cache lives in ``diagnose_mec._diag_cache`` so the trusted
+diagnosis workflow and legacy Tool wrappers share the same state.
+"""
 
-_lock = threading.Lock()
-_cache: dict[str, dict] = {}
+from diagnose_mec._diag_cache import (
+    cache_diag_data,
+    clear_diag_cache,
+    get_diag_cache,
+)
 
-
-def cache_diag_data(ip: str, data: dict, ttl: int = _CACHE_TTL):
-    with _lock:
-        _cache[ip] = {
-            **data,
-            "_cached_at": time.time(),
-            "_ttl": ttl,
-        }
-
-
-def get_diag_cache(ip: str) -> dict | None:
-    with _lock:
-        entry = _cache.get(ip)
-        if not entry:
-            return None
-        if time.time() - entry["_cached_at"] > entry["_ttl"]:
-            del _cache[ip]
-            return None
-        return entry
-
-
-def clear_diag_cache(ip: str | None = None):
-    with _lock:
-        if ip:
-            _cache.pop(ip, None)
-        else:
-            _cache.clear()
+__all__ = ["cache_diag_data", "get_diag_cache", "clear_diag_cache"]
