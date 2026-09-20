@@ -72,3 +72,13 @@ def test_chat_stream_json_safe_serializes_langchain_messages():
     assert "def _json_safe(value):" in source
     assert 'payload = _json_safe(dict(data))' in source
     assert "HumanMessage" in source
+
+def test_diagnosis_cache_has_canonical_module_and_compatibility_facade():
+    repo_root = Path(__file__).resolve().parents[1]
+    canonical = (repo_root / "diagnose_mec" / "_diag_cache.py").read_text(encoding="utf-8")
+    facade = (repo_root / "tools" / "_diag_cache.py").read_text(encoding="utf-8")
+
+    assert "def cache_diag_data" in canonical
+    assert "def get_diag_cache" in canonical
+    assert "from diagnose_mec._diag_cache import" in facade
+    assert "def cache_diag_data" not in facade
