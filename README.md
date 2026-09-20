@@ -71,7 +71,7 @@ Web UI (webui.py) / API Client
 | `memory.py` | 用户记忆 API：列表、摘要（含容量）、创建、更新、删除 |
 | `repair.py` | 修复执行：接收前端确认的修复操作，调用 `execute_repair()` |
 
-### tools/ 包 — LangChain Tool 定义（27个）
+### tools/ 包 — LangChain Tool 定义与内部执行能力
 
 | 文件 | 工具 | 说明 |
 |------|------|------|
@@ -280,9 +280,9 @@ Agent 的基础 System Prompt 已从 `agent.py` 中移出，默认位于 `prompt
 |---|---|
 | 实体解析 | 非IP设备名/编号先调用 `resolve_mec_device`；项目名/简称先调用 `resolve_mec_project`；多候选禁止猜测 |
 | 上下文 | 当前消息明确指定的项目/设备优先；历史上下文只用于明确的“这个设备/该项目”等省略指代 |
-| MEC诊断 | 实时设备诊断使用 `mec_diagnose_device`；项目批量诊断使用 `mec_diagnose_project` |
+| MEC诊断 | 设备/项目诊断由确定性 Workflow 自动执行；LLM 只接收结构化结果并负责解释 |
 | 数据查询 | 已有数据库状态优先 `query_mec_*`；CPU/内存/硬盘等具体指标使用 `mec_device_info` |
-| 细粒度SSH | 只有聚合工具无法覆盖的具体文件/日志/配置才使用 `mec_ssh_exec` |
+| SSH执行 | `mec_ssh_exec` 仅作为受信任基础设施执行原语，不进入 LLM Tool 白名单 |
 | 深度分析 | 基础诊断明确需要进一步分析时才调用 `mec_llm_diagnose_device` |
 | 数据源 | 默认使用MEC数据；只有明确的服务器/道路/交通流场景使用 `query_server_*` |
 | 修复 | 用户明确要求修复后才调用修复工具；先生成方案，确认后执行 |
@@ -349,7 +349,7 @@ LangGraph 当前使用 `AsyncSqliteSaver` 持久化会话状态；SQLite checkpo
 
 单设备与项目级诊断现在共享同一条执行链：
 
-`候选设备发现 → mec_diagnose_device → Structured Result → diagnosis_router → 可选 mec_llm_diagnose_device → LLM总结`
+`候选设备发现 → diagnosis_workflow → Physical/Container/Process/ROS/Log/Sensor → Evidence Correlation → diagnosis_router → 可选受控深度分析 → LLM总结`
 
 项目级诊断仅负责从数据库/飞书报告发现候选设备并去重，不再针对“物理离线 / 容器离线 / 图片为0”维护独立的诊断规则或独立的 LLM 判定规则。
 
