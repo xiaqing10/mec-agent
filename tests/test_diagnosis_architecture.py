@@ -96,3 +96,15 @@ def test_chat_handles_state_snapshot_and_agent_context_is_bounded():
     assert "max_message_chars: int = 6000" in agent
     assert "max_total_chars: int = 30000" in agent
     assert "retry=0" in agent
+
+
+def test_structured_context_is_used_instead_of_full_checkpoint_history():
+    repo_root = Path(__file__).resolve().parents[1]
+    source = (repo_root / "agent.py").read_text(encoding="utf-8")
+
+    assert 'conversation_context: dict' in source
+    assert 'last_diagnosis_summary: Optional[str]' in source
+    assert 'def _build_model_context' in source
+    assert 'def _select_model_messages' in source
+    assert 'current turn\'s tool chain' in source
+    assert '## 当前结构化上下文' in source
