@@ -32,9 +32,9 @@ def _parse_result(value: Any) -> dict:
 
 def run_device_diagnosis(ip: str, project: str = "") -> dict:
     """Run the canonical deterministic device diagnosis pipeline."""
-    from tools.tool_device import mec_diagnose_device
+    from diagnose_mec.device_diagnosis import run_device_diagnosis_collection
 
-    raw = mec_diagnose_device.invoke({"ip": ip, "project": project or ""})
+    raw = run_device_diagnosis_collection(ip, project or "")
     result = _parse_result(raw)
     if not result:
         return {
