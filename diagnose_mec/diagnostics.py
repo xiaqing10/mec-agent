@@ -749,7 +749,7 @@ def _check_rostopic_hz(host_ip: str, result: dict, has_log_errors: bool) -> dict
         'track_object':                 ('radar_bridge', 'lj'),
         'image_raw':                    ('rtsp',          'zzm'),
         'track_object_project':         ('calibration',   'cy'),
-        'image_detect/compressed':      ('infer',         'xq'),
+        'image_detect_object':           ('infer',         'xq'),
         'fusion_track_object':          ('fusion',        'pj'),
         'traffic_event_object/fps_hz':  ('traffic',       'zrh'),
     }
