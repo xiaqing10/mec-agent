@@ -491,7 +491,7 @@ async def handle_chat_stream(request):
             if not last_ai_msg.strip():
                 from response_fallback import build_deterministic_fallback
                 last_ai_msg = build_deterministic_fallback(
-                    final_state.get("messages", []),
+                    _state_values(final_state).get("messages", []),
                     tool_names=stream_tool_names,
                     errors=["模型未返回非空 content"],
                 )
