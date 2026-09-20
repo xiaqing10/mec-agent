@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .ssh import (
-    ssh_exec, _combined_ssh, _docker_cmd, _docker_exec_cmd,
+    ssh_exec as _raw_ssh_exec, _combined_ssh as _raw_combined_ssh, _docker_cmd, _docker_exec_cmd as _raw_docker_exec_cmd,
     _get_device_credentials, find_physical_user, ping_host,
     CONTAINER_PORT, CONTAINER_USER, PHYSICAL_USERS, ROS_ENV_CMD,
 )
@@ -18,9 +18,82 @@ from query_sensor_status import get_sensor_status
 logger = logging.getLogger("diagnose_mec.diagnostics")
 
 
+# Diagnostic execution timing is intentionally centralized here so that every
+# SSH/container command is observable without changing the deterministic workflow.
+def _timing_label(command: str) -> str:
+    command = " ".join(str(command).split())
+    return command[:240]
+
+
+def ssh_exec(*args, **kwargs):
+    started = time.monotonic()
+    host = args[0] if args else kwargs.get("host", "?")
+    port = args[1] if len(args) > 1 else kwargs.get("port", "?")
+    command = args[3] if len(args) > 3 else kwargs.get("command", "")
+    timeout = kwargs.get("exec_timeout")
+    logger.info("[TIMING] SSH开始 | host=%s:%s | timeout=%ss | cmd=%s", host, port, timeout, _timing_label(command))
+    try:
+        result = _raw_ssh_exec(*args, **kwargs)
+        elapsed = time.monotonic() - started
+        stdout = result[0] if isinstance(result, tuple) and result else ""
+        code = result[2] if isinstance(result, tuple) and len(result) > 2 else "?"
+        logger.info("[TIMING] SSH完成 | host=%s:%s | %.2fs | code=%s | stdout=%dB", host, port, elapsed, code, len(stdout or ""))
+        return result
+    except Exception:
+        logger.exception("[TIMING] SSH异常 | host=%s:%s | %.2fs | cmd=%s", host, port, time.monotonic() - started, _timing_label(command))
+        raise
+
+
+def _combined_ssh(*args, **kwargs):
+    started = time.monotonic()
+    host = args[0] if args else kwargs.get("host", "?")
+    port = args[1] if len(args) > 1 else kwargs.get("port", "?")
+    commands = args[3] if len(args) > 3 else kwargs.get("commands", [])
+    timeout = kwargs.get("exec_timeout")
+    labels = [str(item[0]) for item in commands] if commands else []
+    logger.info("[TIMING] SSH批量开始 | host=%s:%s | timeout=%ss | markers=%s", host, port, timeout, ",".join(labels))
+    try:
+        result = _raw_combined_ssh(*args, **kwargs)
+        logger.info("[TIMING] SSH批量完成 | host=%s:%s | %.2fs | markers=%s", host, port, time.monotonic() - started, ",".join(labels))
+        return result
+    except Exception:
+        logger.exception("[TIMING] SSH批量异常 | host=%s:%s | %.2fs | markers=%s", host, port, time.monotonic() - started, ",".join(labels))
+        raise
+
+
+def _docker_exec_cmd(*args, **kwargs):
+    started = time.monotonic()
+    host = args[0] if args else kwargs.get("host", "?")
+    command = args[2] if len(args) > 2 else kwargs.get("command", "")
+    timeout = kwargs.get("exec_timeout")
+    logger.info("[TIMING] DockerExec开始 | host=%s | timeout=%ss | cmd=%s", host, timeout, _timing_label(command))
+    try:
+        result = _raw_docker_exec_cmd(*args, **kwargs)
+        elapsed = time.monotonic() - started
+        stdout = result[0] if isinstance(result, tuple) and result else ""
+        code = result[2] if isinstance(result, tuple) and len(result) > 2 else "?"
+        logger.info("[TIMING] DockerExec完成 | host=%s | %.2fs | code=%s | stdout=%dB", host, elapsed, code, len(stdout or ""))
+        return result
+    except Exception:
+        logger.exception("[TIMING] DockerExec异常 | host=%s | %.2fs | cmd=%s", host, time.monotonic() - started, _timing_label(command))
+        raise
+
+
+def _timed_sensor_status(host_ip: str, project: str = ""):
+    started = time.monotonic()
+    logger.info("[TIMING] SensorStatus开始 | host=%s | project=%s", host_ip, project)
+    try:
+        result = get_sensor_status(host_ip, project)
+        logger.info("[TIMING] SensorStatus完成 | host=%s | %.2fs", host_ip, time.monotonic() - started)
+        return result
+    except Exception:
+        logger.exception("[TIMING] SensorStatus异常 | host=%s | %.2fs", host_ip, time.monotonic() - started)
+        raise
+
+
 def _add_sensor_status(result: dict, host_ip: str, project: str = ""):
     try:
-        si = get_sensor_status(host_ip, project)
+        si = _timed_sensor_status(host_ip, project)
         if si.get("total_cameras", 0) > 0 or si.get("total_radars", 0) > 0:
             result["sensor_status"] = si
     except Exception:
@@ -29,6 +102,8 @@ def _add_sensor_status(result: dict, host_ip: str, project: str = ""):
 
 
 def diagnose_container_offline(host_ip: str, progress_cb=None, project: str = "") -> dict:
+    _diag_started = time.monotonic()
+    logger.info("[TIMING] diagnose_container_offline开始 | host=%s | project=%s", host_ip, project)
     logger.info("=" * 70)
     logger.info("🔍 诊断：物理机在线但容器不可连 - %s", host_ip)
     logger.info("=" * 70)
@@ -151,6 +226,8 @@ def diagnose_container_offline(host_ip: str, progress_cb=None, project: str = ""
 
 
 def diagnose_zero_images(host_ip: str, container_ssh_info=None, progress_cb=None, project: str = "") -> dict:
+    _diag_started = time.monotonic()
+    logger.info("[TIMING] diagnose_zero_images开始 | host=%s | project=%s", host_ip, project)
     logger.info("=" * 70)
     logger.info("🔍 诊断：容器在线但今日图片为0 - %s", host_ip)
     logger.info("=" * 70)
@@ -902,6 +979,8 @@ def _check_rostopic_hz(host_ip: str, result: dict, has_log_errors: bool) -> dict
 
 
 def collect_device_raw_data(host_ip: str, project: str = "", access_info: dict | None = None) -> dict:
+    _diag_started = time.monotonic()
+    logger.info("[TIMING] collect_device_raw_data开始 | host=%s | project=%s", host_ip, project)
     logger.info("=" * 70)
     logger.info("📡 数据采集（LLM模式）: %s", host_ip)
     logger.info("=" * 70)
@@ -1143,7 +1222,7 @@ def collect_device_raw_data(host_ip: str, project: str = "", access_info: dict |
             raw["topic_rates"][topic] = '\n'.join(topic_output.get(topic, [])) or "(无输出)"
 
     try:
-        si = get_sensor_status(host_ip, project)
+        si = _timed_sensor_status(host_ip, project)
         if si.get("total_cameras", 0) > 0 or si.get("total_radars", 0) > 0:
             raw["sensor_status"] = si
     except Exception:
