@@ -41,6 +41,33 @@ async def get_agent():
     return _agent
 
 
+def _json_safe(value):
+    """Convert LangChain/runtime objects into SSE-safe JSON values."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(v) for v in value]
+    # LangChain BaseMessage (HumanMessage/AIMessage/ToolMessage, etc.).
+    if hasattr(value, "content") and hasattr(value, "type"):
+        return {
+            "type": getattr(value, "type", type(value).__name__),
+            "content": _json_safe(getattr(value, "content", "")),
+        }
+    if hasattr(value, "model_dump"):
+        try:
+            return _json_safe(value.model_dump())
+        except Exception:
+            pass
+    if hasattr(value, "dict"):
+        try:
+            return _json_safe(value.dict())
+        except Exception:
+            pass
+    return str(value)
+
+
 def _fix_table_alignment(text: str) -> str:
     import re
     lines = text.split('\n')
@@ -245,7 +272,7 @@ async def handle_chat_stream(request):
 
     async def _send(event_type: str, data: dict):
         nonlocal _disconnected
-        payload = dict(data)
+        payload = _json_safe(dict(data))
         payload.setdefault("request_id", request_id)
         text = f"event: {event_type}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
         try:
