@@ -359,6 +359,21 @@ async def handle_chat_stream(request):
                     last_ai_msg += content
                     await _send("token", {"content": content})
 
+            elif kind == "on_chain_start" and name == "diagnosis_workflow":
+                # Diagnosis is now a deterministic graph node rather than an
+                # LLM-selected ToolNode call. Keep the existing progress UI.
+                current_tool = "mec_diagnose_device"
+                stream_tool_names.append(current_tool)
+                tool_called = True
+                await _send("tool_start", {"name": current_tool, "input": data.get("input", {})})
+                drain_task = asyncio.ensure_future(_drain_progress_loop())
+
+            elif kind == "on_chain_end" and name == "diagnosis_workflow":
+                if drain_task is not None:
+                    drain_task.cancel()
+                    drain_task = None
+                await _send("tool_end", {"name": current_tool or "mec_diagnose_device"})
+
             elif kind == "on_tool_start":
                 current_tool = name
                 if name and name not in stream_tool_names:
