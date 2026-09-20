@@ -56,3 +56,12 @@ def test_agent_tool_allowlist_excludes_execution_primitives():
     )
     names = {elt.value for elt in assignment.value.elts}
     assert {"mec_ssh_exec", "mec_diagnose_device", "mec_diagnose_project"} .isdisjoint(names)
+
+
+def test_device_diagnosis_implementation_lives_outside_tool_module():
+    tool_source = _source("tools/tool_device.py")
+    domain_source = _source("diagnose_mec/device_diagnosis.py")
+    assert "def run_device_diagnosis_collection" in domain_source
+    assert "from diagnose_mec.device_diagnosis import run_device_diagnosis_collection" in tool_source
+    assert tool_source.count("def mec_diagnose_device(") == 1
+    assert len(domain_source) > 10000
