@@ -329,6 +329,29 @@ def run_device_diagnosis_collection(ip: str, project: str = "") -> str:
     roscore = iz.get("roscore", "")
     topic_rates = iz.get("topic_rates", {})
     rostopic = iz.get("rostopic", "")
+    container_fs_readonly = iz.get("container_filesystem_readonly")
+    container_fs_detail = iz.get("container_filesystem", "无法判断")
+
+    # 容器文件系统检查位于进程诊断之前；发现只读后仍继续进程/ROS检查，保留完整证据。
+    if container_fs_readonly is True:
+        fs_status = "error"
+        fs_problem = "container_filesystem_readonly"
+        fs_detail = f"容器根文件系统为只读（{container_fs_detail}）"
+    elif container_fs_readonly is False:
+        fs_status = "ok"
+        fs_problem = None
+        fs_detail = f"容器根文件系统可写（{container_fs_detail}）"
+    else:
+        fs_status = "warning"
+        fs_problem = "container_filesystem_unknown"
+        fs_detail = "无法判断容器根文件系统读写状态"
+    dimensions.append({
+        "name": "容器文件系统",
+        "status": fs_status,
+        "detail": fs_detail,
+        **({"problem": fs_problem} if fs_problem else {}),
+    })
+    _notify_progress("容器文件系统", fs_status, fs_detail)
 
     # 进程维度：supervisorctl status + roscore
     proc_parts = []
@@ -496,6 +519,7 @@ def run_device_diagnosis_collection(ip: str, project: str = "") -> str:
             "ssh_unreachable": 100,
             "docker_service_down": 90,
             "dev_container_missing": 85,
+            "container_filesystem_readonly": 82,
             "dev_container_stopped": 85,
             "container_exec_failed": 80,
             "container_ssh_down": 75,
@@ -552,6 +576,7 @@ def run_device_diagnosis_collection(ip: str, project: str = "") -> str:
             "physical_ssh": bool(access.get("physical_ssh")),
             "container_ssh": bool(access.get("container_ssh")),
             "docker_exec": bool(access.get("docker_exec")),
+            "container_filesystem_readonly": container_fs_readonly,
             "access_mode": access.get("access_mode", "none"),
         },
     )
