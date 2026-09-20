@@ -142,7 +142,18 @@ Web UI (webui.py) / API Client
 ---
 
 
-### 诊断架构边界
+#
+
+### 长会话上下文保护
+
+生产 Agent 使用 LangGraph SQLite checkpoint 保存完整会话状态，但**不会把完整历史原样发送给 LLM**。每次模型调用都会建立独立的输入视图：
+
+- 最近消息窗口限制为 12 条；
+- 单条消息最多约 6,000 字符；
+- 单次模型上下文最多约 30,000 字符；
+- 超长诊断日志/ToolMessage 只裁剪模型输入，不修改 checkpoint 中的原始状态；
+- 交互式 Agent LLM 调用不再自动重试一次，避免单次超时从约 45 秒放大到约 90 秒；
+- SSE 收尾同时兼容 LangGraph 的普通 dict state 和 StateSnapshot，LLM 超时后仍能生成确定性兜底回复。## 诊断架构边界
 
 当前分支的目标架构是：
 
