@@ -49,6 +49,8 @@ def run_device_diagnosis(ip: str, project: str = "") -> dict:
         }
 
     # The collector owns facts; the workflow owns the execution boundary.
+    from .evidence import correlate_root_cause
+    result = correlate_root_cause(result)
     result.setdefault("workflow", "deterministic_device_diagnosis")
     result.setdefault("execution_policy", {
         "llm_controls_commands": False,
