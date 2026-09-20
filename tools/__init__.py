@@ -51,8 +51,25 @@ TOOLS = [
     generate_improvement_report,
 ]
 
+
+# Tools that are explicitly safe to expose to the conversational LLM.
+# Deterministic workflows, raw SSH, and LLM-invoked deep-analysis tools are
+# intentionally excluded. They may still be imported and invoked by trusted
+# workflow code.
+AGENT_TOOL_NAMES = {
+    "resolve_mec_device", "resolve_mec_project", "mec_device_info",
+    "query_mec_abnormal", "query_mec_device_from_db", "query_mec_project_from_db",
+    "query_mec_event_records", "query_mec_event_image", "query_mec_project_event_stats",
+    "query_server_traffic_flow", "query_server_events", "query_server_event_stats",
+    "query_server_device_metrics", "query_server_traffic_pattern",
+    "query_server_analysis_report", "feishu_analyze_logs", "feishu_fetch_report",
+    "help_info", "memory", "mec_repair_device", "push_to_dingtalk",
+    "generate_improvement_report",
+}
+AGENT_TOOLS = [t for t in TOOLS if getattr(t, "name", "") in AGENT_TOOL_NAMES]
+
 __all__ = [
-    "TOOLS",
+    "TOOLS", "AGENT_TOOLS",
     "set_diag_progress_callback", "reset_diag_progress_callback", "get_diag_progress_callback",
     "resolve_mec_device", "resolve_mec_project",
     "mec_diagnose_device", "mec_device_info", "mec_llm_diagnose_device",
