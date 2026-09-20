@@ -169,5 +169,8 @@ ROOT_CAUSE_CN = {
     "topic_all_zero": "所有ROS话题无数据 — 关键topic帧率为0",
     "topic_partial_zero": "部分ROS话题无数据 — 部分关键topic帧率为0",
     "log_error_only": "日志异常 — supervisor正常但日志中存在错误输出",
+    "container_memory_exhaustion": "容器内存耗尽 — OOM导致进程/容器异常并可能引发下游数据中断",
+    "device_unreachable": "设备整体不可达 — 当前没有可用的物理机或容器访问路径",
+    "diagnosis_result_invalid": "诊断结果异常 — 采集完成但结果无法解析",
     "unknown": "未知根因 — 需人工进一步排查",
 }
