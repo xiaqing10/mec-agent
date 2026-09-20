@@ -226,8 +226,19 @@ def route_request_node(state: AgentState) -> dict:
         "",
     )
     hint = route_request(last_user)
+    explicit_project, explicit_ip = extract_explicit_request_context(last_user)
+    device_ip = explicit_ip or state.get("request_ip") or state.get("last_ip") or ""
+    project = explicit_project or state.get("request_project") or state.get("last_project") or ""
     return {
         "route_hint": hint.get("route", "general"),
+        "request_ip": device_ip,
+        "request_project": project,
+        "conversation_context": {
+            "current_request": last_user[:1000],
+            "route": hint.get("route", "general"),
+            "device_ip": device_ip,
+            "project": project,
+        },
         "deep_analysis_done": False,
         "diagnosis_workflow_done": False,
     }
@@ -317,12 +328,20 @@ def diagnosis_workflow_node(state: AgentState) -> dict:
 
     result = run_diagnosis(route, ip=ip, project=project)
     tool_name = "mec_diagnose_device" if route == "device_diagnosis" else "mec_diagnose_project"
+    summary = result.get("summary_for_llm") or result.get("summary") or result.get("overall") or ""
+    if not isinstance(summary, str):
+        summary = json.dumps(summary, ensure_ascii=False)
     return {
         "messages": [ToolMessage(
             content=json.dumps(result, ensure_ascii=False),
             name=tool_name,
             tool_call_id=f"deterministic_{tool_name}",
         )],
+        "last_diagnosis_summary": summary[:6000],
+        "conversation_context": {
+            **(state.get("conversation_context") or {}),
+            "last_diagnosis": summary[:6000],
+        },
         "diagnosis_workflow_done": True,
     }
 
