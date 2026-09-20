@@ -156,6 +156,7 @@ class AgentState(TypedDict):
     request_model: Optional[str]
     route_hint: Optional[str]
     deep_analysis_done: bool
+    diagnosis_workflow_done: bool
 
 
 def extract_explicit_request_context(text: str) -> tuple[str, str]:
@@ -295,7 +296,7 @@ def diagnosis_workflow_node(state: AgentState) -> dict:
 
     if not ip:
         import re
-        match = re.search(r"\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b", last_user)
+        match = re.search(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", last_user)
         if match:
             ip = match.group(0)
 
@@ -522,6 +523,7 @@ def build_agent():
     graph = StateGraph(AgentState)
 
     graph.add_node("agent", _agent_node_sync)
+    graph.add_node("diagnosis_workflow", diagnosis_workflow_node)
     graph.add_node("tools", tool_node)
     graph.add_node("route_request", route_request_node)
     graph.add_node("post_tool_router", _post_tool_router_node_sync)
