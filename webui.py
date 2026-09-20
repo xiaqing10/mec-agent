@@ -17,7 +17,7 @@ async def handle_static(request):
 async def handle_webui(request):
     from config import API_KEY, FEEDBACK_DELAY_SECONDS, AVAILABLE_MODELS, AGENT_VERSION
     html = WEBUI_HTML.replace('__API_KEY__', json.dumps(API_KEY))
-    html = html.replace('__AGENT_VERSION__', json.dumps(AGENT_VERSION))
+    html = html.replace('__AGENT_VERSION__', AGENT_VERSION)
     html = html.replace('__FEEDBACK_DELAY__', str(FEEDBACK_DELAY_SECONDS * 1000))
     html = html.replace('__AVAILABLE_MODELS__', json.dumps(AVAILABLE_MODELS, ensure_ascii=False))
     return web.Response(text=html, content_type='text/html', headers={'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0', 'Pragma': 'no-cache'})
