@@ -448,7 +448,7 @@ async def agent_node(state: AgentState) -> dict:
             model_id=state.get("request_model") or None,
             timeout=45,
             max_tokens=4096,
-            retry=1,
+            retry=0,
         )
     except Exception as exc:
         logger.exception("❌ LLM gateway 失败 | 耗时=%.1fs", time.time() - _t0)
