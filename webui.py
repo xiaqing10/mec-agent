@@ -15,8 +15,9 @@ async def handle_static(request):
 
 
 async def handle_webui(request):
-    from config import API_KEY, FEEDBACK_DELAY_SECONDS, AVAILABLE_MODELS
+    from config import API_KEY, FEEDBACK_DELAY_SECONDS, AVAILABLE_MODELS, AGENT_VERSION
     html = WEBUI_HTML.replace('__API_KEY__', json.dumps(API_KEY))
+    html = html.replace('__AGENT_VERSION__', json.dumps(AGENT_VERSION))
     html = html.replace('__FEEDBACK_DELAY__', str(FEEDBACK_DELAY_SECONDS * 1000))
     html = html.replace('__AVAILABLE_MODELS__', json.dumps(AVAILABLE_MODELS, ensure_ascii=False))
     return web.Response(text=html, content_type='text/html', headers={'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0', 'Pragma': 'no-cache'})
@@ -315,7 +316,7 @@ body {
 <body>
 <div class="header">
   <div class="header-badge">智慧交通垂域智能体</div>
-  <span class="subtitle">v4.0-debug · LangGraph</span>
+  <span class="subtitle">v__AGENT_VERSION__ · LangGraph</span>
   <div class="header-right">
     <span class="user-info" id="userInfo"></span>
     <select id="modelSelect" onchange="onModelChange()" style="font-size:12px;padding:4px 8px;border-radius:4px;border:1px solid var(--border-color);background:var(--bg-surface);color:var(--text-primary);cursor:pointer;"></select>
