@@ -106,7 +106,7 @@ Web UI (webui.py) / API Client
 
 | 文件 | 说明 |
 |------|------|
-| `diagnostics.py` | 核心诊断函数：`diagnose_container_offline`（4步：物理机→Docker→docker exec→容器SSH）、`diagnose_zero_images`（5步：连通性→采集→supervisor分析→日志检查→rostopic频率）、`collect_device_raw_data`（LLM深度分析用） |
+| `diagnostics.py` | 核心诊断函数：`diagnose_container_offline`（物理机→Docker→docker exec→容器SSH）、`diagnose_zero_images`（连通性→容器文件系统→supervisor/roscore→日志→rostopic频率）、`collect_device_raw_data`（LLM深度分析用） |
 | `parsers.py` | 解析函数：`_parse_ssh_failure_reason`、`_parse_supervisor_status`、`_format_abnormal_summary`、`_load_diagnostic_patterns` |
 | `ssh.py` | SSH 连接管理：`ssh_exec`（paramiko 密码 + 系统 ssh 公钥）、`find_physical_user`（多用户+多认证方式尝试）、`_combined_ssh`（批量采集）、`_docker_exec_cmd`（fallback） |
 
@@ -276,7 +276,7 @@ route_request（确定性识别）
 diagnosis_workflow
   ├─ 设备目标解析
   ├─ 访问路径解析（物理SSH / 容器SSH / docker exec）
-  ├─ Physical / Container / Process
+  ├─ Physical / Container / Container Filesystem / Process
   ├─ ROS / Topic / Log
   ├─ Image / Sensor
   └─ 结构化证据 + 根因/症状分离
@@ -296,9 +296,9 @@ agent（只负责解释与对话）
 |------|---------|
 | 物理机 | SSH 可达性、运行时间、硬盘占用率（`/` 和 `/data`） |
 | 物理机可达性 | 物理机 SSH、容器 SSH、Docker Exec 按统一访问策略判定；物理机 SSH 失败不直接等价于设备不可达 |
-| 容器 | Docker 运行状态、SSH 连接 |
-| 进程 | supervisor 进程状态、日志错误分析（驱动异常/ROS连接失败/OOM） |
-| ROS | roscore 运行状态、topic 频率 |
+| 容器 | Docker 运行状态、容器 SSH 连接、容器根文件系统读写状态 |
+| 进程 | supervisor 进程状态、日志错误分析（驱动异常/ROS连接失败/OOM）；在容器文件系统检查之后执行 |
+| ROS | roscore 运行状态、关键 topic 频率；关键图像 topic 使用 `image_detect_object`，排除 `image_detect/compressed` |
 | 数据源 | 今日图片数量 |
 | 传感器 | 摄像头和雷达在线率 |
 
