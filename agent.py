@@ -32,7 +32,7 @@ from langchain_core.messages import BaseMessage, AIMessage, ToolMessage, HumanMe
 from langchain_openai import ChatOpenAI
 
 from config import AVAILABLE_MODELS
-from tools import TOOLS, mec_llm_diagnose_device
+from tools import AGENT_TOOLS, mec_llm_diagnose_device
 from llm_gateway import get_chat_model, invoke_messages, switch_model as gateway_switch_model
 from request_router import route_request
 from prompt_config import load_agent_system_prompt
@@ -90,7 +90,7 @@ def _select_agent_tools(route: str):
     Device/project diagnosis is a deterministic workflow, not an LLM Tool.
     SSH command execution is never exposed to the model.
     """
-    by_name = {getattr(t, "name", ""): t for t in TOOLS}
+    by_name = {getattr(t, "name", ""): t for t in AGENT_TOOLS}
     common = ["resolve_mec_device", "resolve_mec_project", "help_info", "memory"]
     route_names = {
         "device_diagnosis": common + [
@@ -518,7 +518,7 @@ def _post_tool_router_node_sync(state: AgentState) -> dict:
 # ──────────────────────────────────────────────
 def build_agent():
     """Build and compile the LangGraph agent (sync version for LangGraph Studio)."""
-    tool_node = ToolNode(TOOLS)
+    tool_node = ToolNode(AGENT_TOOLS)
 
     graph = StateGraph(AgentState)
 
