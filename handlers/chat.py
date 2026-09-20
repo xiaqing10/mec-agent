@@ -124,8 +124,25 @@ def _normalize_table(rows):
     return result
 
 
-def _extract_agent_reply(state: dict) -> str:
-    messages = state.get("messages", [])
+def _state_values(state):
+    """Normalize LangGraph dict-like state and StateSnapshot to a plain mapping."""
+    if state is None:
+        return {}
+    if isinstance(state, dict):
+        return state
+    values = getattr(state, "values", None)
+    if isinstance(values, dict):
+        return values
+    # Some LangGraph versions expose a Mapping-like snapshot without dict inheritance.
+    try:
+        return dict(state)
+    except (TypeError, ValueError):
+        return {}
+
+
+def _extract_agent_reply(state) -> str:
+    state_values = _state_values(state)
+    messages = state_values.get("messages", [])
     for msg in reversed(messages):
         if getattr(msg, 'type', '') != 'ai':
             continue
@@ -182,16 +199,17 @@ async def handle_chat(request):
         )
         from response_fallback import build_deterministic_fallback
         reply = _fix_table_alignment(_extract_agent_reply(final_state) or build_deterministic_fallback(
-            final_state.get("messages", [])))
+            _state_values(final_state).get("messages", [])))
 
         username = _get_username(request) or session_id
-        intent = final_state.get("conversation_intent", "")
-        pending = final_state.get("pending_feedback", False)
-        auto_correctness = final_state.get("auto_correctness")
+        final_values = _state_values(final_state)
+        intent = final_values.get("conversation_intent", "")
+        pending = final_values.get("pending_feedback", False)
+        auto_correctness = final_values.get("auto_correctness")
         if intent:
             try:
                 from feedback_store import create_feedback_record
-                tool_msgs = [m for m in final_state.get("messages", []) if hasattr(m, 'type') and m.type == 'tool']
+                tool_msgs = [m for m in final_values.get("messages", []) if hasattr(m, 'type') and m.type == 'tool']
                 actions = [{"name": getattr(m, 'name', ''), "content": str(getattr(m, 'content', ''))[:100]} for m in tool_msgs[:10]]
                 create_feedback_record(session_id, user_id=username, intent=intent, actions=actions, auto_correctness=auto_correctness)
             except Exception as e:
@@ -208,7 +226,7 @@ async def handle_chat(request):
         logger.error("❌ LangGraph执行失败: %s | 类型=%s", str(e), type(e).__name__, exc_info=True)
         from response_fallback import build_deterministic_fallback
         fallback = build_deterministic_fallback(
-            final_state.get("messages", []) if "final_state" in locals() else [],
+            _state_values(final_state).get("messages", []) if "final_state" in locals() else [],
             errors=[f"{type(e).__name__}: {str(e)}"],
         )
         # Keep the transport successful so the UI always has a user-visible reply.
